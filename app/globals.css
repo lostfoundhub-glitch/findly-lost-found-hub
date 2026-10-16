@@ -24,3 +24,645 @@ body {
   color: var(--foreground);
   font-family: Arial, Helvetica, sans-serif;
 }
+/* Findly — Lost & Found Hub 2.0 */
+
+html {
+  scroll-behavior: smooth;
+}
+
+body {
+  margin: 0;
+}
+
+.category-peach {
+  background: #f8e7dc;
+}
+
+.category-blue {
+  background: #e1eaf6;
+}
+
+.category-yellow {
+  background: #f8efc9;
+}
+
+.category-pink {
+  background: #f4e1e8;
+}
+
+.category-green {
+  background: #e0ecdf;
+}
+
+.category-purple {
+  background: #eae3f5;
+}
+
+.item-peach {
+  background: linear-gradient(135deg, #f8e7dc, #f4d5c2);
+}
+
+.item-blue {
+  background: linear-gradient(135deg, #e1eaf6, #cbdcf0);
+}
+
+.item-yellow {
+  background: linear-gradient(135deg, #f8efc9, #f5e3a0);
+}
+
+@media (prefers-reduced-motion: reduce) {
+  html {
+    scroll-behavior: auto;
+  }
+
+  *,
+  *::before,
+  *::after {
+    animation-duration: 0.01ms !important;
+    animation-iteration-count: 1 !important;
+    transition-duration: 0.01ms !important;
+    scroll-behavior: auto !important;
+  }
+}
+/* ========================================
+   FINDLY 2.0 — PASTEL DREAMLAND
+   ======================================== */
+
+html {
+  scroll-behavior: smooth;
+}
+
+body {
+  margin: 0;
+}
+
+::selection {
+  background: #d9c9ff;
+  color: #49376f;
+}
+
+/* Pastel category backgrounds */
+
+.category-pink {
+  background: #fbe1ed;
+}
+
+.category-blue {
+  background: #e1efff;
+}
+
+.category-yellow {
+  background: #fff0bf;
+}
+
+.category-purple {
+  background: #eae2ff;
+}
+
+.category-mint {
+  background: #ddf5e8;
+}
+
+.category-peach {
+  background: #ffe8dc;
+}
+
+/* Pastel item backgrounds */
+
+.item-pink {
+  background: linear-gradient(135deg, #fbe1ed, #f8cce0);
+}
+
+.item-blue {
+  background: linear-gradient(135deg, #e1efff, #c8e1fa);
+}
+
+.item-yellow {
+  background: linear-gradient(135deg, #fff0bf, #ffe3a0);
+}
+
+/* Status labels */
+
+.status-pink {
+  background: #fff1f6;
+  color: #c35d8b;
+}
+
+.status-mint {
+  background: #e5f9ed;
+  color: #438963;
+}
+
+.status-yellow {
+  background: #fff7d9;
+  color: #9c782b;
+}
+
+/* Hero background blobs */
+
+.hero-blob {
+  position: absolute;
+  pointer-events: none;
+  filter: blur(2px);
+  border-radius: 9999px;
+  z-index: 0;
+}
+
+.hero-blob-purple {
+  width: 280px;
+  height: 280px;
+  top: 5%;
+  right: -100px;
+  background: #eee6ff;
+  opacity: 0.75;
+}
+
+.hero-blob-pink {
+  width: 180px;
+  height: 180px;
+  bottom: 22%;
+  left: -100px;
+  background: #fbe1ed;
+  opacity: 0.7;
+}
+
+.hero-art-circle {
+  animation: circle-breathe 6s ease-in-out infinite;
+}
+
+.hero-art-circle-secondary {
+  animation: circle-breathe 7s ease-in-out infinite reverse;
+}
+
+/* Floating cards */
+
+.float-card {
+  will-change: transform;
+}
+
+.float-bag {
+  animation: float-bag 5s ease-in-out infinite;
+}
+
+.float-headphones {
+  animation: float-headphones 4.8s ease-in-out infinite;
+}
+
+.float-bear {
+  animation: float-bear 5.5s ease-in-out infinite;
+}
+
+.float-keys {
+  animation: float-keys 4.5s ease-in-out infinite;
+}
+
+/* Soft floating animation */
+
+@keyframes float-bag {
+  0%,
+  100% {
+    transform: translateY(0) rotate(-10deg);
+  }
+
+  50% {
+    transform: translateY(-13px) rotate(-6deg);
+  }
+}
+
+@keyframes float-headphones {
+  0%,
+  100% {
+    transform: translateY(0) rotate(10deg);
+  }
+
+  50% {
+    transform: translateY(12px) rotate(5deg);
+  }
+}
+
+@keyframes float-bear {
+  0%,
+  100% {
+    transform: translateY(0) rotate(8deg);
+  }
+
+  50% {
+    transform: translateY(-10px) rotate(12deg);
+  }
+}
+
+@keyframes float-keys {
+  0%,
+  100% {
+    transform: translateY(0) rotate(-8deg);
+  }
+
+  50% {
+    transform: translateY(11px) rotate(-3deg);
+  }
+}
+
+@keyframes circle-breathe {
+  0%,
+  100% {
+    transform: scale(1);
+  }
+
+  50% {
+    transform: scale(1.045);
+  }
+}
+
+/* Sparkles */
+
+.animate-twinkle {
+  animation: twinkle 2.2s ease-in-out infinite;
+}
+
+@keyframes twinkle {
+  0%,
+  100% {
+    opacity: 0.55;
+    transform: scale(0.9) rotate(-8deg);
+  }
+
+  50% {
+    opacity: 1;
+    transform: scale(1.15) rotate(8deg);
+  }
+}
+
+/* Gentle bouncing */
+
+.animate-bounce-soft {
+  animation: bounce-soft 2.6s ease-in-out infinite;
+}
+
+@keyframes bounce-soft {
+  0%,
+  100% {
+    transform: translateY(0);
+  }
+
+  50% {
+    transform: translateY(-8px);
+  }
+}
+
+/* Gentle hero entrance */
+
+.animate-fade-up {
+  animation: fade-up 0.8s ease-out both;
+}
+
+@keyframes fade-up {
+  from {
+    opacity: 0;
+    transform: translateY(18px);
+  }
+
+  to {
+    opacity: 1;
+    transform: translateY(0);
+  }
+}
+
+/* Category cards */
+
+.category-card {
+  animation: fade-up 0.65s ease-out both;
+}
+
+.category-card-delay-a {
+  animation-delay: 0.08s;
+}
+
+.category-card-delay-b {
+  animation-delay: 0.18s;
+}
+
+/* Keyboard accessibility */
+
+a:focus-visible,
+button:focus-visible {
+  outline: 3px solid #a58aef;
+  outline-offset: 4px;
+}
+
+/* Mobile adjustments */
+
+@media (max-width: 640px) {
+  .hero-blob-purple {
+    width: 180px;
+    height: 180px;
+    right: -100px;
+  }
+
+  .hero-blob-pink {
+    width: 120px;
+    height: 120px;
+    left: -70px;
+  }
+}
+
+/* Respect reduced-motion preferences */
+
+@media (prefers-reduced-motion: reduce) {
+  html {
+    scroll-behavior: auto;
+  }
+
+  *,
+  *::before,
+  *::after {
+    animation-duration: 0.01ms !important;
+    animation-iteration-count: 1 !important;
+    transition-duration: 0.01ms !important;
+    scroll-behavior: auto !important;
+  }
+}
+
+/* Floating real item photos behind the original hero illustrations */
+.hero-art {
+  isolation: isolate;
+}
+
+.hero-photo-orbit {
+  position: absolute;
+  width: 220px;
+  height: 220px;
+  top: 50%;
+  left: 50%;
+  z-index: 2;
+  pointer-events: none;
+  transform: translate(-50%, -50%);
+  animation: hero-photo-orbit-rotate 24s linear infinite;
+}
+
+.hero-photo {
+  position: absolute;
+  width: 76px;
+  height: 76px;
+  overflow: hidden;
+  border: 5px solid white;
+  border-radius: 50%;
+  background: white;
+  box-shadow: 0 12px 28px rgba(73, 55, 111, 0.18);
+  animation: hero-photo-upright 24s linear infinite;
+  will-change: transform;
+}
+
+@keyframes hero-photo-upright {
+  from {
+    rotate: 0deg;
+  }
+
+  to {
+    rotate: -360deg;
+  }
+}
+
+.hero-photo img {
+  display: block;
+  width: 100%;
+  height: 100%;
+  object-fit: cover;
+}
+
+.hero-photo-one {
+  top: 0;
+  left: 50%;
+  transform: translate(-50%, -50%);
+}
+
+.hero-photo-two {
+  top: 50%;
+  right: 0;
+  transform: translate(50%, -50%);
+}
+
+.hero-photo-three {
+  bottom: 0;
+  left: 50%;
+  transform: translate(-50%, 50%);
+}
+
+.hero-photo-four {
+  top: 50%;
+  left: 0;
+  transform: translate(-50%, -50%);
+}
+
+@keyframes hero-photo-float {
+  0%,
+  100% {
+    translate: 0 0;
+  }
+
+  50% {
+    translate: 0 -12px;
+  }
+}
+
+@keyframes hero-photo-orbit-rotate {
+  from {
+    transform: translate(-50%, -50%) rotate(0deg);
+  }
+
+  to {
+    transform: translate(-50%, -50%) rotate(360deg);
+  }
+}
+
+@media (min-width: 640px) {
+  .hero-photo-orbit {
+    width: 280px;
+    height: 280px;
+  }
+
+  .hero-photo {
+    width: 76px;
+    height: 76px;
+    border-radius: 50%;
+  }
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .hero-photo-orbit,
+  .hero-photo {
+    animation: none;
+  }
+}
+
+.magnifying-glass-bounce {
+  animation: magnifyingGlassBounce 2s ease-in-out infinite;
+  transform-origin: center;
+}
+
+@keyframes magnifyingGlassBounce {
+  0%, 100% {
+    transform: translateY(0) rotate(0deg);
+  }
+
+  25% {
+    transform: translateY(-8px) rotate(-4deg);
+  }
+
+  50% {
+    transform: translateY(0) rotate(0deg);
+  }
+
+  75% {
+    transform: translateY(-4px) rotate(3deg);
+  }
+}
+/* ========================================
+   FINDLY — ANIMATED SPONSORED AD
+   ======================================== */
+
+/* การ์ดโฆษณาลอยขึ้นลงอย่างนุ่มนวล */
+.home-ad-card {
+  position: relative;
+  isolation: isolate;
+  box-shadow: 0 8px 30px rgba(116, 88, 157, 0.07);
+  animation: home-ad-float 5s ease-in-out infinite;
+  transition:
+    box-shadow 300ms ease,
+    border-color 300ms ease;
+}
+
+/* แสงสะท้อนวิ่งผ่านการ์ด */
+.home-ad-card::after {
+  content: "";
+  position: absolute;
+  inset: 0;
+  z-index: 5;
+  pointer-events: none;
+  border-radius: inherit;
+  background: linear-gradient(
+    115deg,
+    transparent 30%,
+    rgba(255, 255, 255, 0.34) 48%,
+    transparent 66%
+  );
+  transform: translateX(-120%);
+  animation: home-ad-shimmer 7s ease-in-out infinite;
+  animation-delay: 1s;
+}
+
+/* ยกการ์ดขึ้นเบา ๆ เมื่อชี้ */
+.home-ad-card:hover {
+  box-shadow: 0 20px 45px rgba(116, 88, 157, 0.14);
+  animation-play-state: paused;
+}
+
+/* ภาพกาแฟเคลื่อนไหวอย่างละเอียด */
+.home-ad-image {
+  transition:
+    transform 900ms cubic-bezier(0.2, 0.7, 0.2, 1),
+    filter 700ms ease;
+}
+
+.home-ad-card:hover .home-ad-image {
+  transform: scale(1.07);
+  filter: saturate(1.08);
+}
+
+/* วงกลมตกแต่งด้านหลังขยับช้า ๆ */
+.home-ad-orb {
+  animation: home-ad-orb 6s ease-in-out infinite;
+}
+
+.home-ad-orb-secondary {
+  animation-delay: -3s;
+}
+
+/* ปุ่มโฆษณาตอบสนองต่อเมาส์ */
+.home-ad-button {
+  transition:
+    background-color 250ms ease,
+    transform 250ms ease,
+    box-shadow 250ms ease;
+}
+
+.home-ad-card:hover .home-ad-button {
+  background-color: #604887;
+  box-shadow: 0 8px 20px rgba(73, 55, 111, 0.18);
+}
+
+/* Keyframes */
+@keyframes home-ad-float {
+  0%,
+  100% {
+    transform: translateY(0);
+  }
+
+  50% {
+    transform: translateY(-5px);
+  }
+}
+
+@keyframes home-ad-shimmer {
+  0%,
+  68%,
+  100% {
+    transform: translateX(-120%);
+  }
+
+  86% {
+    transform: translateX(120%);
+  }
+}
+
+@keyframes home-ad-orb {
+  0%,
+  100% {
+    transform: translate(0, 0) scale(1);
+  }
+
+  50% {
+    transform: translate(-8px, 8px) scale(1.08);
+  }
+}
+
+/* ลดการเคลื่อนไหวเมื่อผู้ใช้ตั้งค่าความเหมาะสมไว้ */
+@media (prefers-reduced-motion: reduce) {
+  .home-ad-card,
+  .home-ad-card::after,
+  .home-ad-orb {
+    animation: none;
+  }
+
+  .home-ad-image,
+  .home-ad-button {
+    transition: none;
+  }
+}
+.action-item {
+  display: flex;
+  flex: 1;
+  min-width: 0;
+  flex-direction: column;
+  gap: 7px;
+}
+
+.action-caption {
+  margin: 0;
+  padding: 0 3px;
+  color: #9a8bab;
+  font-size: 10px;
+  line-height: 1.6;
+}
+
+.actions .primary-button,
+.actions .secondary-button {
+  width: 100%;
+  min-height: 45px;
+  gap: 8px;
+}
+
+@media (max-width: 480px) {
+  .action-item {
+    width: 100%;
+  }
+}
