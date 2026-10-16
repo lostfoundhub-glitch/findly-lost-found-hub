@@ -44,6 +44,7 @@ export default function ReportPage() {
   const [date, setDate] = useState("");
   const [contact, setContact] = useState("");
   const [image, setImage] = useState("");
+  const [imageFile, setImageFile] = useState<File | null>(null);
   const [imageName, setImageName] = useState("");
   const [error, setError] = useState("");
   const [success, setSuccess] = useState(false);
@@ -58,18 +59,30 @@ export default function ReportPage() {
     setError("");
     setSuccess(false);
 
-    if (!file) return;
+    if (!file) {
+      setImageFile(null);
+      setImage("");
+      setImageName("");
+      return;
+    }
     if (!file.type.startsWith("image/")) {
       setError("ไฟล์ที่เลือกต้องเป็นรูปภาพนะ");
       event.target.value = "";
+      setImageFile(null);
+      setImage("");
+      setImageName("");
       return;
     }
     if (file.size > 3 * 1024 * 1024) {
       setError("รูปภาพต้องมีขนาดไม่เกิน 3 MB ลองเลือกรูปที่เล็กกว่านี้นะ");
       event.target.value = "";
+      setImageFile(null);
+      setImage("");
+      setImageName("");
       return;
     }
 
+    setImageFile(file);
     const reader = new FileReader();
     reader.onload = () => {
       setImage(typeof reader.result === "string" ? reader.result : "");
@@ -80,97 +93,129 @@ export default function ReportPage() {
   }
 
   async function handleSubmit(event: FormEvent<HTMLFormElement>) {
-  event.preventDefault();
-  setError("");
-  setSuccess(false);
+    event.preventDefault();
+    setError("");
+    setSuccess(false);
 
-  if (
-    !name.trim() ||
-    !category ||
-    !color.trim() ||
-    !description.trim() ||
-    !location.trim() ||
-    !date ||
-    !contact.trim()
-  ) {
-    setError("กรอกข้อมูลที่มีเครื่องหมาย * ให้ครบก่อนส่งแบบฟอร์มนะ");
-    return;
+    if (
+      !name.trim() ||
+      !category ||
+      !color.trim() ||
+      !description.trim() ||
+      !location.trim() ||
+      !date ||
+      !contact.trim()
+    ) {
+      setError("กรอกข้อมูลที่มีเครื่องหมาย * ให้ครบก่อนส่งแบบฟอร์มนะ");
+      return;
+    }
+
+    try {
+      const { createClient } = await import("@/lib/supabase/client");
+      const supabase = createClient();
+
+      let imageUrl: string | null = null;
+      let imagePath: string | null = null;
+
+      // อัปโหลดไฟล์จริงไป Supabase Storage ก่อน แล้วจึงบันทึก URL ลงตาราง items
+      if (imageFile) {
+        const extensionFromName = imageFile.name.split(".").pop()?.toLowerCase();
+        const safeExtension =
+          extensionFromName && /^[a-z0-9]+$/.test(extensionFromName)
+            ? extensionFromName
+            : "jpg";
+        const filePath = `reports/${crypto.randomUUID()}.${safeExtension}`;
+
+        const { data: uploadedFile, error: uploadError } = await supabase.storage
+          .from("item-images")
+          .upload(filePath, imageFile, {
+            cacheControl: "3600",
+            upsert: false,
+            contentType: imageFile.type,
+          });
+
+        if (uploadError) {
+          console.error("Supabase image upload error:", uploadError);
+          setError(
+            `อัปโหลดรูปไม่สำเร็จ: ${uploadError.message} ตรวจสอบว่ามี Storage bucket ชื่อ item-images และตั้งค่าให้เข้าถึงรูปได้`
+          );
+          return;
+        }
+
+        imagePath = uploadedFile.path;
+        const { data: publicUrlData } = supabase.storage
+          .from("item-images")
+          .getPublicUrl(uploadedFile.path);
+        imageUrl = publicUrlData.publicUrl;
+      }
+
+      // ไม่บันทึกข้อมูลติดต่อส่วนตัวลงในตารางสาธารณะ
+      const { data: insertedData, error: databaseError } = await supabase
+        .from("items")
+        .insert({
+          name: name.trim(),
+          category,
+          type,
+          location: location.trim(),
+          date,
+          image: imageUrl,
+          image_path: imagePath,
+          card_color: "#F3ECFF",
+          color_name: color.trim(),
+          description: [
+            description.trim(),
+            brand.trim() ? `ยี่ห้อ/รุ่น: ${brand.trim()}` : "",
+            `สี: ${color.trim()}`,
+          ]
+            .filter(Boolean)
+            .join("\\n"),
+          status: "active",
+        })
+        .select("id, name, type, status, image, image_path")
+        .single();
+
+      if (databaseError) {
+        console.error("Supabase insert error:", databaseError);
+        setError(`บันทึกลงฐานข้อมูลไม่สำเร็จ: ${databaseError.message}`);
+        return;
+      }
+
+      console.log("Supabase insert success:", insertedData);
+
+      // เก็บสำเนาไว้ในเบราว์เซอร์เครื่องนี้ด้วย โดยใช้ URL ที่ทุกอุปกรณ์เข้าถึงได้
+      const report: SavedReport = {
+        id: `report-${Date.now()}`,
+        type,
+        name: name.trim(),
+        category,
+        color: color.trim(),
+        brand: brand.trim(),
+        description: description.trim(),
+        location: location.trim(),
+        date,
+        contact: contact.trim(),
+        image: imageUrl ?? image,
+        createdAt: new Date().toISOString(),
+      };
+
+      const existing = localStorage.getItem("findly_reports");
+      const parsed: unknown = existing ? JSON.parse(existing) : [];
+      const reports: SavedReport[] = Array.isArray(parsed) ? parsed : [];
+
+      localStorage.setItem(
+        "findly_reports",
+        JSON.stringify([report, ...reports])
+      );
+
+      setSuccess(true);
+      window.scrollTo({ top: 0, behavior: "smooth" });
+    } catch (error) {
+      console.error("Findly report error:", error);
+      setError(
+        "เกิดข้อผิดพลาดระหว่างบันทึกข้อมูล กรุณาตรวจสอบการเชื่อมต่อแล้วลองใหม่อีกครั้ง"
+      );
+    }
   }
-
-  try {
-    const { createClient } = await import("@/lib/supabase/client");
-    const supabase = createClient();
-
-    // บันทึกเฉพาะข้อมูลสิ่งของลงฐานข้อมูลส่วนกลาง
-    // ไม่บันทึกข้อมูลติดต่อส่วนตัวลงในตารางสาธารณะ
-    const { data: insertedData, error: databaseError } = await supabase
-  .from("items")
-  .insert({
-    name: name.trim(),
-    category,
-    type,
-    location: location.trim(),
-    date,
-    image: null,
-    card_color: "#F3ECFF",
-    color_name: color.trim(),
-    description: [
-      description.trim(),
-      brand.trim() ? `ยี่ห้อ/รุ่น: ${brand.trim()}` : "",
-      `สี: ${color.trim()}`,
-    ]
-      .filter(Boolean)
-      .join("\n"),
-    status: "active",
-  })
-  .select("id, name, type, status")
-  .single();
-
-if (databaseError) {
-  console.error("Supabase insert error:", databaseError);
-  setError(
-    `บันทึกลงฐานข้อมูลไม่สำเร็จ: ${databaseError.message}`
-  );
-  return;
-}
-
-console.log("Supabase insert success:", insertedData);
-
-    // เก็บข้อมูลไว้ในเบราว์เซอร์เครื่องนี้ด้วย
-    // เพื่อให้หน้าเว็บเดิมยังอ่านข้อมูลของผู้ใช้เครื่องนี้ได้
-    const report: SavedReport = {
-      id: `report-${Date.now()}`,
-      type,
-      name: name.trim(),
-      category,
-      color: color.trim(),
-      brand: brand.trim(),
-      description: description.trim(),
-      location: location.trim(),
-      date,
-      contact: contact.trim(),
-      image,
-      createdAt: new Date().toISOString(),
-    };
-
-    const existing = localStorage.getItem("findly_reports");
-    const parsed: unknown = existing ? JSON.parse(existing) : [];
-    const reports: SavedReport[] = Array.isArray(parsed) ? parsed : [];
-
-    localStorage.setItem(
-      "findly_reports",
-      JSON.stringify([report, ...reports])
-    );
-
-    setSuccess(true);
-    window.scrollTo({ top: 0, behavior: "smooth" });
-  } catch (error) {
-    console.error("Findly report error:", error);
-    setError(
-      "เกิดข้อผิดพลาดระหว่างบันทึกข้อมูล กรุณาตรวจสอบการเชื่อมต่อแล้วลองใหม่อีกครั้ง"
-    );
-  }
-}
 
   function resetForm() {
     setType("lost");
@@ -183,6 +228,7 @@ console.log("Supabase insert success:", insertedData);
     setDate(new Date().toLocaleDateString("en-CA"));
     setContact("");
     setImage("");
+    setImageFile(null);
     setImageName("");
     setError("");
     setSuccess(false);

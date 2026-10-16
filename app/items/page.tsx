@@ -237,24 +237,14 @@ useEffect(() => {
 }, []);
 
   // รวมรายการที่ผู้ใช้แจ้งกับข้อมูลตัวอย่าง
-  const allItems: Item[] = useMemo(
-    () => [
-      ...savedReports.map((report) => ({
-        id: report.id,
-        name: report.name,
-        category: report.category,
-        type: report.type,
-        location: report.location || "ไม่ระบุสถานที่",
-        date: report.date || "ไม่ระบุวันที่",
-        image: report.image || "",
-        cardColor: "#F3ECFF",
-        colorName: report.color || "ไม่ระบุสี",
-      })),
-      
-      ...items,
-    ],
-    [savedReports]
-  );
+  // รวมรายการจาก Supabase และข้อมูลตัวอย่าง
+// ให้ Supabase เป็นแหล่งข้อมูลหลักของรายการจริง
+const allItems: Item[] = useMemo(() => {
+  return [
+    ...databaseItems,
+    ...items,
+  ];
+}, [databaseItems]);
 
   // เตรียมข้อมูลสำหรับระบบ Smart Match
   const matchReports: MatchReport[] = useMemo(
@@ -1817,7 +1807,7 @@ useEffect(() => {
               return (
                 <article
                   className="card"
-                  key={item.id}
+                  key={`${String(item.id)}-${index}`}
                   style={{
                     animationDelay: `${Math.min(index, 8) * 40}ms`,
                   }}
