@@ -48,6 +48,9 @@ export default function ReportPage() {
   const [imageName, setImageName] = useState("");
   const [error, setError] = useState("");
   const [success, setSuccess] = useState(false);
+  const [isSubmitting, setIsSubmitting] = useState(false);
+  const [verificationNotice, setVerificationNotice] = useState("");
+  const [verificationFailed, setVerificationFailed] = useState(false);
 
   useEffect(() => {
     // The date input is set on the client to avoid server/client timezone mismatches.
@@ -93,9 +96,14 @@ export default function ReportPage() {
   }
 
   async function handleSubmit(event: FormEvent<HTMLFormElement>) {
-    event.preventDefault();
+  event.preventDefault();
+
+  if (isSubmitting) return;
+  setIsSubmitting(true);
     setError("");
     setSuccess(false);
+    setVerificationNotice("");
+    setVerificationFailed(false);
 
     if (
       !name.trim() ||
@@ -113,6 +121,17 @@ export default function ReportPage() {
     try {
       const { createClient } = await import("@/lib/supabase/client");
       const supabase = createClient();
+
+      // ต้องมี session เพื่อผูกผู้สร้างรายการกับบัญชีที่ล็อกอิน
+      const {
+        data: { user },
+        error: authError,
+      } = await supabase.auth.getUser();
+
+      if (authError || !user) {
+        setError("กรุณาเข้าสู่ระบบก่อนแจ้งรายการ เพื่อบันทึกเจ้าของรายการให้ถูกต้อง");
+        return;
+      }
 
       let imageUrl: string | null = null;
       let imagePath: string | null = null;
@@ -165,14 +184,14 @@ export default function ReportPage() {
           description: [
             description.trim(),
             brand.trim() ? `ยี่ห้อ/รุ่น: ${brand.trim()}` : "",
-            `สี: ${color.trim()}`,
           ]
             .filter(Boolean)
-            .join("\\n"),
+            .join("\n"),
           status: "active",
+          created_by: user.id,
         })
-        .select("id, name, type, status, image, image_path")
-        .single();
+        .select("id, name, type, status, image, image_path, created_by")
+.single();
 
       if (databaseError) {
         console.error("Supabase insert error:", databaseError);
@@ -181,6 +200,70 @@ export default function ReportPage() {
       }
 
       console.log("Supabase insert success:", insertedData);
+      console.log("Findly creator check:", {
+        authUserId: user.id,
+        savedCreatedBy: insertedData?.created_by,
+      });
+
+      // ตรวจไม่ให้แจ้งว่าสำเร็จ หากฐานข้อมูลไม่ได้คืนค่าเจ้าของรายการกลับมา
+      if (!insertedData?.created_by || insertedData.created_by !== user.id) {
+        console.error("created_by mismatch after insert", {
+          authUserId: user.id,
+          savedCreatedBy: insertedData?.created_by,
+          itemId: insertedData?.id,
+        });
+        setError(
+          "บันทึกรายการแล้ว แต่ระบบยืนยันเจ้าของรายการไม่สำเร็จ กรุณารีเฟรชหน้าและลองอีกครั้ง หากยังพบปัญหาให้ติดต่อผู้ดูแลระบบ"
+        );
+        return;
+      }
+
+      // ถ้าเป็นรายการที่พบของ ให้ AI สร้างคำถามยืนยันเจ้าของและบันทึกลงฐานข้อมูล
+      // หาก AI มีปัญหา จะยังคงถือว่าการแจ้งสิ่งของสำเร็จ เพราะรายการถูกบันทึกแล้ว
+      if (type === "found") {
+        try {
+          const aiResponse = await fetch("/api/verification", {
+            method: "POST",
+            headers: { "Content-Type": "application/json" },
+            body: JSON.stringify({ item_id: Number(insertedData.id) }),
+          });
+          let aiResult: { success?: boolean; error?: string; questions?: unknown } = {};
+          const responseText = await aiResponse.text();
+          try {
+            aiResult = responseText
+              ? (JSON.parse(responseText) as typeof aiResult)
+              : {};
+          } catch {
+            aiResult = { error: responseText || "เซิร์ฟเวอร์ไม่ได้ส่งรายละเอียดกลับมา" };
+          }
+
+          if (!aiResponse.ok || !aiResult.success) {
+            console.error("Findly AI verification generation failed:", {
+              status: aiResponse.status,
+              statusText: aiResponse.statusText,
+              result: aiResult,
+            });
+            setVerificationFailed(true);
+            setVerificationNotice(
+              `บันทึกประกาศแล้ว แต่สร้างคำถาม AI ไม่สำเร็จ (HTTP ${aiResponse.status})${aiResult.error ? `: ${aiResult.error}` : " กรุณาตรวจสอบ Terminal ของเซิร์ฟเวอร์"}`
+            );
+          } else {
+            setVerificationFailed(false);
+            setVerificationNotice(
+              "AI สร้างและบันทึกคำถามยืนยันความเป็นเจ้าของ 5 ข้อเรียบร้อยแล้ว"
+            );
+          }
+        } catch (aiError) {
+          console.error("Findly AI verification request error:", aiError);
+          setVerificationFailed(true);
+          setVerificationNotice(
+            "บันทึกประกาศแล้ว แต่ยังเชื่อมต่อ AI ไม่สำเร็จ กรุณาตรวจสอบการตั้งค่าเซิร์ฟเวอร์ภายหลัง"
+          );
+        }
+      } else {
+        setVerificationNotice("");
+        setVerificationFailed(false);
+      }
 
       // เก็บสำเนาไว้ในเบราว์เซอร์เครื่องนี้ด้วย โดยใช้ URL ที่ทุกอุปกรณ์เข้าถึงได้
       const report: SavedReport = {
@@ -209,11 +292,13 @@ export default function ReportPage() {
 
       setSuccess(true);
       window.scrollTo({ top: 0, behavior: "smooth" });
-    } catch (error) {
+        } catch (error) {
       console.error("Findly report error:", error);
       setError(
         "เกิดข้อผิดพลาดระหว่างบันทึกข้อมูล กรุณาตรวจสอบการเชื่อมต่อแล้วลองใหม่อีกครั้ง"
       );
+    } finally {
+      setIsSubmitting(false);
     }
   }
 
@@ -232,6 +317,8 @@ export default function ReportPage() {
     setImageName("");
     setError("");
     setSuccess(false);
+    setVerificationNotice("");
+    setVerificationFailed(false);
   }
 
   return (
@@ -518,8 +605,21 @@ aside[aria-label="โฆษณาร้านเครื่องดื่ม�
               <div>
                 <h2 className="font-extrabold text-[#26765F]">บันทึกแบบฟอร์มเรียบร้อยแล้ว!</h2>
                 <p className="mt-1 text-sm leading-6 text-[#477D6E]">
-                  ข้อมูลนี้บันทึกไว้ในเบราว์เซอร์เครื่องนี้ก่อน ยังไม่ได้แชร์ไปให้ผู้ใช้อื่นเห็น และยังไม่แสดงในหน้าค้นหาโดยอัตโนมัติ
+                  บันทึกข้อมูลลงฐานข้อมูลแล้ว คุณสามารถไปหน้าค้นหาสิ่งของเพื่อตรวจสอบรายการได้
                 </p>
+                {type === "found" && verificationNotice && (
+                  <p
+                    role={verificationFailed ? "alert" : "status"}
+                    className={`mt-3 rounded-xl border px-3 py-2 text-sm leading-6 ${
+                      verificationFailed
+                        ? "border-[#F4C6CF] bg-[#FFF0F3] text-[#A83E59]"
+                        : "border-[#BDE8D8] bg-white text-[#26765F]"
+                    }`}
+                  >
+                    {verificationFailed ? "⚠️ " : "✨ "}
+                    {verificationNotice}
+                  </p>
+                )}
                 <div className="mt-3 flex flex-wrap gap-3">
                   <Link href="/items" className="rounded-full bg-[#B9A0F8] px-4 py-2 text-sm font-extrabold text-white hover:bg-[#a58be8]">
                     ไปหน้าค้นหาสิ่งของ
@@ -620,9 +720,14 @@ aside[aria-label="โฆษณาร้านเครื่องดื่ม�
               <input id="contact" className="field" value={contact} onChange={(e) => setContact(e.target.value)} placeholder="เช่น LINE ID หรืออีเมลสำหรับติดต่อกลับ" required maxLength={160} />
               <p className="mt-2 text-xs leading-5 text-[#9B8AAF]">เพื่อความปลอดภัย อย่าใส่รหัสผ่านหรือข้อมูลส่วนตัวที่ไม่จำเป็น และควรใช้ช่องทางติดต่อที่สะดวกให้ผู้อื่นติดต่อกลับ</p>
             </div>
-          </div>
-
-          <div className="mt-8 flex flex-col-reverse gap-3 sm:flex-row sm:items-center sm:justify-between">
+         <button
+  type="submit"
+  disabled={isSubmitting}
+  className="rounded-full bg-[#B9A0F8] px-8 py-3.5 text-sm font-extrabold text-white shadow-lg shadow-[#B9A0F8]/20 transition hover:-translate-y-0.5 hover:bg-[#A58BE8] disabled:cursor-not-allowed disabled:opacity-60"
+>
+  {isSubmitting ? "กำลังบันทึก..." : "ส่งแบบฟอร์ม"}
+  {!isSubmitting && <span aria-hidden="true"> ✦</span>}
+</button>
             <Link href="/" className="rounded-full px-5 py-3 text-center text-sm font-bold text-[#8B7D94] transition hover:bg-[#FAF5FC]">
               ← กลับหน้าแรก
             </Link>
@@ -631,7 +736,7 @@ aside[aria-label="โฆษณาร้านเครื่องดื่ม�
             </button>
           </div>
           <p className="mt-5 text-center text-xs leading-5 text-[#B5A9BD]">
-            เวอร์ชันต้นแบบ: ข้อมูลจะถูกเก็บในเบราว์เซอร์เครื่องนี้เท่านั้น ยังไม่ได้แชร์กับผู้ใช้คนอื่น
+            ข้อมูลรายงานจะถูกบันทึกลงระบบ Findly เพื่อให้หน้ารายการสิ่งของนำไปแสดงผล
           </p>
         </form>
         </section>

@@ -2,7 +2,8 @@
 
 import Link from "next/link";
 import { usePathname } from "next/navigation";
-import { useState } from "react";
+import { useEffect, useState } from "react";
+import { createClient } from "@/lib/supabase/client";
 
 const menuGroups = [
   {
@@ -37,6 +38,51 @@ const menuGroups = [
 export default function Navbar() {
   const pathname = usePathname();
   const [mobileOpen, setMobileOpen] = useState(false);
+
+  const [unreadCount, setUnreadCount] = useState(0);
+
+useEffect(() => {
+  const supabase = createClient();
+  let active = true;
+
+  async function loadUnreadCount() {
+    const {
+      data: { user },
+    } = await supabase.auth.getUser();
+
+    if (!active) return;
+
+    if (!user) {
+      setUnreadCount(0);
+      return;
+    }
+
+    const { count, error } = await supabase
+      .from("notifications")
+      .select("id", { count: "exact", head: true })
+      .eq("user_id", user.id)
+      .eq("is_read", false);
+
+    if (!active) return;
+
+    if (!error) {
+      setUnreadCount(count ?? 0);
+    }
+  }
+
+  void loadUnreadCount();
+
+  const {
+    data: { subscription },
+  } = supabase.auth.onAuthStateChange(() => {
+    void loadUnreadCount();
+  });
+
+  return () => {
+    active = false;
+    subscription.unsubscribe();
+  };
+}, []);
 
   // หน้าแรกและหน้า Items มี Navigation เดิมของตัวเอง
   // จึงซ่อน Navbar กลางเพื่อไม่ให้เมนูซ้อนกัน
@@ -98,6 +144,25 @@ export default function Navbar() {
           ))}
         </nav>
 
+{/* Notification Bell */}
+<Link
+  href="/notifications"
+  aria-label={
+    unreadCount > 0
+      ? `การแจ้งเตือนที่ยังไม่ได้อ่าน ${unreadCount} รายการ`
+      : "การแจ้งเตือน"
+  }
+  className="relative flex h-10 w-10 shrink-0 items-center justify-center rounded-xl border border-[#EDE5F4] bg-white text-xl transition hover:bg-[#F0E9FF]"
+>
+  🔔
+
+  {unreadCount > 0 && (
+    <span className="absolute -right-1 -top-1 flex h-5 min-w-5 items-center justify-center rounded-full bg-red-500 px-1 text-[10px] font-bold text-white">
+      {unreadCount > 99 ? "99+" : unreadCount}
+    </span>
+  )}
+</Link>
+
         {/* Login / Signup */}
         <div className="hidden items-center gap-2 lg:flex">
           <Link
@@ -130,6 +195,19 @@ export default function Navbar() {
       {/* Mobile Navigation */}
       {mobileOpen && (
         <nav className="max-h-[75vh] overflow-y-auto border-t border-[#EDE5F4] bg-white px-4 py-4 lg:hidden">
+          <Link
+  href="/notifications"
+  onClick={() => setMobileOpen(false)}
+  className="mb-4 flex items-center justify-between rounded-xl border border-[#EDE5F4] bg-[#FFFAF7] px-4 py-3 font-semibold text-[#493D55]"
+>
+  <span>🔔 การแจ้งเตือน</span>
+
+  {unreadCount > 0 && (
+    <span className="rounded-full bg-red-500 px-2 py-1 text-xs font-bold text-white">
+      {unreadCount > 99 ? "99+" : unreadCount}
+    </span>
+  )}
+</Link>
           {menuGroups.map((group) => (
             <div key={group.title} className="mb-5">
               <h2 className="mb-2 px-2 text-xs font-bold uppercase tracking-wide text-[#8B7D94]">

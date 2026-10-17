@@ -3,6 +3,7 @@ import { SAMPLE_ITEMS as SHARED_SAMPLE_ITEMS } from "../../../lib/sample-items";
 import { useEffect, useMemo, useState } from "react";
 import Link from "next/link";
 import { useParams } from "next/navigation";
+import { createClient } from "../../../lib/supabase/client";
 import {
   calculateSmartMatch,
   findSmartMatches,
@@ -146,6 +147,25 @@ function getScoreLevel(score: number): {
   };
 }
 
+function getCleanDescription(description?: string): string {
+  if (!description?.trim()) return "";
+
+  const cleaned = description
+    // แปลงข้อความ \n และ \r\n ที่บันทึกเป็นตัวอักษร ให้เป็นการขึ้นบรรทัดใหม่
+    .replace(/\\r\\n|\\n|\\r/g, "\n")
+    // ตัดข้อความหมวดหมู่หรือสีที่ต่อท้ายรายละเอียด
+    .replace(/(?:หมวดหมู่สินค้า|หมวดหมู่|สี)\s*[:：][^\r\n]*/gi, "")
+    // แยกบรรทัดและทำความสะอาด
+    .split(/\r?\n/)
+    .map((line) => line.trim())
+    .filter(Boolean)
+    .join(" ")
+    .replace(/\s{2,}/g, " ")
+    .trim();
+
+  return cleaned;
+}
+
 function getImageUrl(image: string): string {
   if (!image.trim()) return "";
 
@@ -177,15 +197,17 @@ export default function ItemDetailPage() {
   const [claimSubmitted, setClaimSubmitted] = useState(false);
 
   useEffect(() => {
-    function loadReports() {
+    let cancelled = false;
+
+    async function loadReports() {
+      let databaseItems: Item[] = [];
+      let savedItems: Item[] = [];
+
+      // อ่านรายการที่ผู้ใช้เคยบันทึกไว้ในเบราว์เซอร์ เพื่อรองรับข้อมูลเดิม
       try {
         const stored = localStorage.getItem("findly_reports");
-
-        let savedItems: Item[] = [];
-
         if (stored) {
           const parsed: unknown = JSON.parse(stored);
-
           if (Array.isArray(parsed)) {
             savedItems = parsed
               .filter(
@@ -196,40 +218,78 @@ export default function ItemDetailPage() {
                       "id" in report &&
                       "name" in report &&
                       "type" in report &&
-                      (report.type === "lost" ||
-                        report.type === "found")
+                      (report.type === "lost" || report.type === "found")
                   )
               )
               .map(normalizeSavedReport);
           }
         }
-
-        const savedIds = new Set(
-          savedItems.map((item) => String(item.id))
-        );
-
-        const remainingSamples = SAMPLE_ITEMS.filter(
-          (item) => !savedIds.has(String(item.id))
-        );
-
-        setItems([...savedItems, ...remainingSamples]);
       } catch (error) {
-        console.error("Unable to load Findly reports:", error);
-        setItems(SAMPLE_ITEMS);
-      } finally {
-        setIsLoading(false);
+        console.error("Unable to load Findly reports from local storage:", error);
       }
+
+      // ดึงข้อมูลจริงจาก Supabase โดยใช้ตาราง public.items
+      try {
+        const supabase = createClient();
+        const { data, error } = await supabase
+          .from("items")
+          .select(
+            "id, name, category, type, location, date, image, image_path, card_color, color_name, color, brand, description, contact, status"
+          )
+          .eq("status", "active")
+          .order("created_at", { ascending: false });
+
+        if (error) {
+          console.error("Unable to load items from Supabase:", error.message);
+        } else if (data) {
+          databaseItems = data
+            .filter(
+              (row) => row.type === "lost" || row.type === "found"
+            )
+            .map((row) => ({
+              id: row.id,
+              name: row.name || "ไม่ระบุชื่อสิ่งของ",
+              category: row.category || "อื่น ๆ",
+              type: row.type as ItemType,
+              location: row.location || "ไม่ระบุสถานที่",
+              date: row.date || "ไม่ระบุวันที่",
+              image: row.image || row.image_path || "",
+              colorName: row.color_name || row.color || "ไม่ระบุสี",
+              brand: row.brand || "",
+              description: row.description || "",
+              contact: row.contact || "",
+              status: row.status || "active",
+            }));
+        }
+      } catch (error) {
+        console.error("Supabase connection failed while loading item details:", error);
+      }
+
+      if (cancelled) return;
+
+      // ให้ข้อมูลจากฐานข้อมูลมีลำดับความสำคัญ และไม่แสดงรหัสซ้ำจากแหล่งอื่น
+      const combined = [...databaseItems, ...savedItems, ...SAMPLE_ITEMS];
+      const seenIds = new Set<string>();
+      const uniqueItems = combined.filter((item) => {
+        const id = String(item.id);
+        if (seenIds.has(id)) return false;
+        seenIds.add(id);
+        return true;
+      });
+
+      setItems(uniqueItems);
+      setIsLoading(false);
     }
 
-    loadReports();
+    void loadReports();
 
-    const handleStorage = () => loadReports();
-    const handleFocus = () => loadReports();
-
+    const handleStorage = () => void loadReports();
+    const handleFocus = () => void loadReports();
     window.addEventListener("storage", handleStorage);
     window.addEventListener("focus", handleFocus);
 
     return () => {
+      cancelled = true;
       window.removeEventListener("storage", handleStorage);
       window.removeEventListener("focus", handleFocus);
     };
@@ -516,8 +576,10 @@ export default function ItemDetailPage() {
               <div className="info-row">
                 <span className="info-icon description-icon">☰</span>
                 <div className="info-content">
-                  <span className="info-label">รายละเอียดเพิ่มเติม</span>
-                  <strong>{currentItem.description?.trim() || "ไม่ได้ระบุ"}</strong>
+                 <span className="info-label">รายละเอียดเพิ่มเติม</span>
+<strong>
+  {getCleanDescription(currentItem.description) || "ไม่ได้ระบุ"}
+</strong>
                 </div>
               </div>
 
@@ -544,17 +606,13 @@ export default function ItemDetailPage() {
                   <span className="button-arrow">→</span>
                 </Link>
               ) : (
-                <button
-                  type="button"
-                  className="primary-button"
-                  onClick={() => {
-                    setClaimModalOpen(true);
-                    setClaimSubmitted(false);
-                  }}
-                >
-                  แสดงความเป็นเจ้าของ
-                  <span className="button-arrow">→</span>
-                </button>
+               <Link
+  href={`/verification?itemId=${encodeURIComponent(String(currentItem.id))}`}
+  className="primary-button"
+>
+  แสดงความเป็นเจ้าของ
+  <span className="button-arrow">→</span>
+</Link>
               )}
 
               <Link href="/items" className="secondary-button">
@@ -2610,7 +2668,64 @@ const styles = `
   .intro-pill-dot { background: #49766b; box-shadow: none; }
   .page-intro h1 span { color: #49766b; }
   .detail-card, .match-section { border-color: #e5e8e5; border-radius: 20px; background: #fff; box-shadow: 0 8px 28px rgba(40,55,71,.06); backdrop-filter: none; }
-  .photo-frame { border-color: #e2e5e3; background: #f0f1ed; }
+  /* Marketplace-style item photo */
+.photo-frame {
+  position: relative;
+  overflow: hidden;
+  border: 1px solid #e2e8e4;
+  border-radius: 18px;
+  background: linear-gradient(145deg, #f7f8f5, #edf1ed);
+  box-shadow: 0 8px 24px rgba(40, 55, 71, 0.06);
+  transition:
+    box-shadow 220ms ease,
+    border-color 220ms ease;
+}
+
+.photo-frame:hover {
+  border-color: #cbdad1;
+  box-shadow: 0 12px 30px rgba(40, 55, 71, 0.1);
+}
+
+.item-photo {
+  display: block;
+  width: 100%;
+  height: 100%;
+  min-height: 0;
+  object-fit: contain;
+  object-position: center;
+  border-radius: inherit;
+}
+
+/* Responsive image frame */
+@media (min-width: 801px) {
+  .photo-frame {
+    min-height: 0;
+    height: 480px;
+  }
+}
+
+@media (max-width: 800px) {
+  .photo-frame {
+    min-height: 310px;
+    height: 380px;
+  }
+
+  .item-photo {
+    min-height: 0;
+  }
+}
+
+@media (max-width: 600px) {
+  .photo-frame {
+    height: auto;
+    min-height: 0;
+    aspect-ratio: 1 / 0.86;
+  }
+
+  .item-photo {
+    min-height: 0;
+  }
+}
   .photo-type-badge { box-shadow: none; }
   .item-id { color: #52605e; border-color: #e2e5e3; background: #f7f8f6; }
   .item-description, .info-label { color: #727a79; }

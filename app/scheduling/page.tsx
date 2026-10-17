@@ -2,6 +2,7 @@
 
 import Link from "next/link";
 import { useEffect, useMemo, useState } from "react";
+import { createClient } from "@/lib/supabase/client";
 
 type Report = {
   id?: string | number;
@@ -15,11 +16,14 @@ type Report = {
   date?: string;
   image?: string;
   imageUrl?: string;
+  claimId?: number | string;
+  status?: string;
 };
 
 type Appointment = {
   id: string;
   reportId: string;
+  claimId: number | string;
   itemName: string;
   itemType: string;
   date: string;
@@ -80,27 +84,6 @@ function formatDate(value: string) {
   }).format(date);
 }
 
-function readAppointments(): Appointment[] {
-  try {
-    const raw = localStorage.getItem("findly_appointments");
-
-    if (!raw) return [];
-
-    const parsed: unknown = JSON.parse(raw);
-
-    if (!Array.isArray(parsed)) return [];
-
-    // รองรับนัดหมายเก่าที่สร้างก่อนมีฟิลด์ mapLink
-    return parsed.map((item) => ({
-      ...item,
-      mapLink:
-        typeof item.mapLink === "string" ? item.mapLink : "",
-    }));
-  } catch {
-    return [];
-  }
-}
-
 function getToday() {
   const now = new Date();
 
@@ -159,24 +142,134 @@ export default function SchedulingPage() {
   const [success, setSuccess] = useState("");
 
   useEffect(() => {
-    try {
-      const raw = localStorage.getItem("findly_reports");
+    let cancelled = false;
 
-      if (raw) {
-        const parsed: unknown = JSON.parse(raw);
+    async function loadSchedulingData() {
+      let stage = "เริ่มโหลดข้อมูล";
+      setReady(false);
+      setError("");
 
-        if (Array.isArray(parsed)) {
-          setReports(parsed as Report[]);
+      try {
+        stage = "ตรวจสอบบัญชีผู้ใช้";
+        const supabase = createClient();
+        const { data: authData, error: authError } = await supabase.auth.getUser();
+        if (authError) throw authError;
+        const user = authData.user;
+
+        if (!user) {
+          setReports([]);
+          setAppointments([]);
+          setError("กรุณาเข้าสู่ระบบด้วยบัญชีที่ยื่นคำร้องแสดงความเป็นเจ้าของก่อนนัดรับคืน");
+          return;
         }
-      }
 
-      setAppointments(readAppointments());
-    } catch (err) {
-      console.error("Findly scheduling loading error:", err);
-      setError("ไม่สามารถโหลดข้อมูลได้ กรุณาลองใหม่อีกครั้ง");
-    } finally {
-      setReady(true);
+        stage = "โหลดคำร้องที่ Admin อนุมัติแล้ว";
+        const { data: claims, error: claimsError } = await supabase
+          .from("item_claims")
+          .select("id, item_id, status, items(id, name, type, category, color, location, date, status)")
+          .eq("claimant_id", user.id)
+          .eq("status", "approved");
+        if (claimsError) throw claimsError;
+
+        const eligibleReports: Report[] = (claims ?? []).flatMap((claim: any): Report[] => {
+          const item = Array.isArray(claim.items) ? claim.items[0] : claim.items;
+          if (!item) return [];
+          return [{
+            id: item.id,
+            name: item.name,
+            type: item.type,
+            category: item.category,
+            color: item.color,
+            location: item.location,
+            date: item.date,
+            status: item.status,
+            claimId: claim.id,
+          }];
+        });
+
+        stage = "โหลดประวัตินัดหมายจาก return_appointments";
+        const { data: appointmentRows, error: appointmentsError } = await supabase
+          .from("return_appointments")
+          .select("id, claim_id, item_id, appointment_date, appointment_time, pickup_method, location, map_link, note, status, created_at, items(name, type)")
+          .eq("scheduled_by", user.id)
+          .order("created_at", { ascending: false });
+        if (appointmentsError) throw appointmentsError;
+
+        const loadedAppointments: Appointment[] = (appointmentRows ?? []).map((row: any) => {
+          const item = Array.isArray(row.items) ? row.items[0] : row.items;
+          const statusLabels: Record<string, string> = {
+            scheduled: "รอยืนยันนัดหมาย",
+            pending_confirmation: "รอยืนยันนัดหมาย",
+            confirmed: "ยืนยันนัดหมายแล้ว",
+            completed: "รับคืนสำเร็จ",
+            cancelled: "ยกเลิกนัดหมาย",
+            canceled: "ยกเลิกนัดหมาย",
+          };
+          return {
+            id: String(row.id),
+            reportId: String(row.item_id),
+            claimId: row.claim_id,
+            itemName: item?.name ?? "ไม่ระบุชื่อสิ่งของ",
+            itemType: item?.type ?? "found",
+            date: row.appointment_date,
+            time: String(row.appointment_time ?? "").slice(0, 5),
+            pickupMethod: row.pickup_method === "campus" ? "campus" : "central",
+            location: row.location ?? "",
+            mapLink: row.map_link ?? "",
+            note: row.note ?? "",
+            status: statusLabels[row.status] ?? row.status,
+            createdAt: row.created_at,
+          };
+        });
+
+        if (!cancelled) {
+          setReports(eligibleReports);
+          setAppointments(loadedAppointments);
+        }
+      } catch (err: unknown) {
+        const getField = (value: unknown, key: string): string => {
+          if (!value || (typeof value !== "object" && typeof value !== "function")) return "";
+          try {
+            const field = Reflect.get(value, key);
+            return field == null ? "" : String(field);
+          } catch {
+            return "";
+          }
+        };
+
+        const details = [
+          getField(err, "message"),
+          getField(err, "details"),
+          getField(err, "hint") ? `คำแนะนำ: ${getField(err, "hint")}` : "",
+          getField(err, "code") ? `รหัส: ${getField(err, "code")}` : "",
+          getField(err, "status") ? `HTTP: ${getField(err, "status")}` : "",
+        ].filter(Boolean).join(" | ");
+
+        console.error("Findly scheduling loading error", {
+          stage,
+          name: getField(err, "name"),
+          message: getField(err, "message"),
+          details: getField(err, "details"),
+          hint: getField(err, "hint"),
+          code: getField(err, "code"),
+          status: getField(err, "status"),
+          raw: err,
+        });
+
+        if (!cancelled) {
+          setReports([]);
+          setAppointments([]);
+          setError(`โหลดข้อมูลนัดหมายไม่สำเร็จ [${stage}]: ${details || "ไม่พบรายละเอียดข้อผิดพลาด กรุณาดู Console"}`);
+        }
+      } finally {
+        if (!cancelled) setReady(true);
+      }
     }
+
+    void loadSchedulingData();
+    return () => {
+      cancelled = true;
+    };
   }, []);
 
   const items = useMemo(() => {
@@ -242,6 +335,7 @@ export default function SchedulingPage() {
     const newAppointment: Appointment = {
       id: crypto.randomUUID(),
       reportId: selectedItem._id,
+      claimId: selectedItem.claimId ?? "",
       itemName: selectedItem._name,
       itemType: selectedItem._type,
       date,
@@ -254,36 +348,70 @@ export default function SchedulingPage() {
       createdAt: new Date().toISOString(),
     };
 
-    try {
-      const updated = [newAppointment, ...appointments];
-
-      localStorage.setItem(
-        "findly_appointments",
-        JSON.stringify(updated)
-      );
-
-      setAppointments(updated);
-      setLocation("");
-      setMapLink("");
-      setNote("");
-
-      setSuccess(
-        "บันทึกข้อมูลนัดหมายในเบราว์เซอร์เรียบร้อยแล้ว แต่ยังไม่ได้ส่งให้ผู้เกี่ยวข้องยืนยัน"
-      );
-
-      setActiveTab("history");
-
-      window.scrollTo({
-        top: 0,
-        behavior: "smooth",
-      });
-    } catch (err) {
-      console.error("Findly scheduling save error:", err);
-
-      setError(
-        "ไม่สามารถบันทึกข้อมูลได้ กรุณาตรวจสอบพื้นที่จัดเก็บข้อมูล"
-      );
+    if (!selectedItem.claimId) {
+      setError("ไม่พบข้อมูลคำร้องที่ได้รับอนุมัติ จึงยังนัดรับคืนไม่ได้");
+      return;
     }
+
+    void (async () => {
+      try {
+        const supabase = createClient();
+        const { data: authData, error: authError } = await supabase.auth.getUser();
+        if (authError) throw authError;
+        if (!authData.user) {
+          setError("เซสชันหมดอายุ กรุณาเข้าสู่ระบบใหม่");
+          return;
+        }
+
+        const { data: savedRow, error: saveError } = await supabase
+          .from("return_appointments")
+          .insert({
+            claim_id: selectedItem.claimId,
+            item_id: selectedItem._id,
+            scheduled_by: authData.user.id,
+            appointment_date: date,
+            appointment_time: time,
+            pickup_method: pickupMethod,
+            location: location.trim(),
+            map_link: mapLink.trim() || null,
+            note: note.trim() || null,
+            status: "scheduled",
+          })
+          .select("id, claim_id, item_id, appointment_date, appointment_time, pickup_method, location, map_link, note, status, created_at")
+          .single();
+
+        if (saveError) throw saveError;
+
+        const newAppointment: Appointment = {
+          id: String(savedRow.id),
+          reportId: String(savedRow.item_id),
+          claimId: savedRow.claim_id,
+          itemName: selectedItem._name,
+          itemType: selectedItem._type,
+          date: savedRow.appointment_date,
+          time: String(savedRow.appointment_time ?? "").slice(0, 5),
+          pickupMethod: savedRow.pickup_method === "campus" ? "campus" : "central",
+          location: savedRow.location,
+          mapLink: savedRow.map_link ?? "",
+          note: savedRow.note ?? "",
+          status: "รอยืนยันนัดหมาย",
+          createdAt: savedRow.created_at,
+        };
+
+        setAppointments((current) => [newAppointment, ...current]);
+        setLocation("");
+        setMapLink("");
+        setNote("");
+        setSuccess("บันทึกนัดหมายลง Supabase แล้ว แต่ยังต้องรอผู้เกี่ยวข้องยืนยันนัดหมาย");
+        setActiveTab("history");
+        window.scrollTo({ top: 0, behavior: "smooth" });
+      } catch (err) {
+        console.error("Findly scheduling save error:", err);
+        setError(err instanceof Error
+          ? `บันทึกนัดหมายไม่สำเร็จ: ${err.message}`
+          : "บันทึกนัดหมายไม่สำเร็จ กรุณาลองใหม่อีกครั้ง");
+      }
+    })();
   }
 
   return (
@@ -535,7 +663,7 @@ export default function SchedulingPage() {
 
                 {ready && items.length === 0 && (
                   <div className="mt-3 rounded-2xl bg-[#FCF9FF] p-4 text-sm leading-6 text-[#8B7D94]">
-                    ยังไม่มีรายการสิ่งของในเบราว์เซอร์นี้{" "}
+                    ยังไม่มีคำร้องที่ได้รับอนุมัติสำหรับบัญชีนี้{" "}
                     <Link
                       href="/report"
                       className="font-extrabold text-[#8064B5] underline"
@@ -844,7 +972,7 @@ export default function SchedulingPage() {
               </div>
 
               <p className="mt-5 text-center text-xs leading-6 text-[#B5A9BD]">
-                ต้นแบบนี้ยังไม่ได้ส่งคำเชิญหรือยืนยันนัดหมายกับผู้ใช้คนอื่น
+                นัดหมายจะมีสถานะรอยืนยันจนกว่าผู้เกี่ยวข้องจะยืนยัน
               </p>
             </form>
           )}
@@ -855,7 +983,7 @@ export default function SchedulingPage() {
               <h2 className="text-xl font-black">ประวัติการนัดหมาย</h2>
 
               <p className="mt-2 text-sm leading-6 text-[#9B8AAF]">
-                รายการนัดหมายที่บันทึกไว้ในเบราว์เซอร์เครื่องนี้
+                รายการนัดหมายที่บันทึกไว้ใน Supabase
               </p>
 
               {!ready ? (

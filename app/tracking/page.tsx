@@ -2,6 +2,7 @@
 
 import Link from "next/link";
 import { useEffect, useMemo, useState } from "react";
+import { createClient } from "@/lib/supabase/client";
 
 type Report = {
   id?: string | number;
@@ -223,21 +224,118 @@ export default function TrackingPage() {
   const [selectedId, setSelectedId] = useState<string | null>(null);
 
   useEffect(() => {
-    try {
-      const stored = localStorage.getItem("findly_reports");
+    let cancelled = false;
 
-      if (stored) {
-        const parsed: unknown = JSON.parse(stored);
+    async function loadTrackingData() {
+      setReady(false);
 
-        if (Array.isArray(parsed)) {
-          setReports(parsed as Report[]);
+      try {
+        const supabase = createClient();
+        const { data: authData, error: authError } = await supabase.auth.getUser();
+
+        if (authError) throw authError;
+
+        if (!authData.user) {
+          if (!cancelled) setReports([]);
+          return;
         }
+
+        const userId = authData.user.id;
+
+        // รายการที่ผู้ใช้เป็นผู้แจ้ง
+        const { data: ownedItems, error: itemsError } = await supabase
+          .from("items")
+          .select(
+            "id, name, type, category, color, brand, description, location, date, image, status, created_at, created_by"
+          )
+          .eq("created_by", userId)
+          .order("created_at", { ascending: false });
+
+        if (itemsError) throw itemsError;
+
+        const itemReports: Report[] = (ownedItems ?? []).map((item) => ({
+          id: item.id,
+          name: item.name,
+          type: item.type,
+          category: item.category,
+          color: item.color,
+          brand: item.brand,
+          description: item.description,
+          location: item.location,
+          date: item.date ?? item.created_at,
+          createdAt: item.created_at,
+          image: item.image,
+          status: item.status,
+          trackingSource: "item",
+        }));
+
+        // คำร้องยืนยันเจ้าของที่ผู้ใช้ส่งมา
+        const { data: claims, error: claimsError } = await supabase
+          .from("item_claims")
+          .select(
+            "id, item_id, claimant_id, status, created_at, items(id, name, type, category, color, brand, description, location, date, image, status)"
+          )
+          .eq("claimant_id", userId)
+          .order("created_at", { ascending: false });
+
+        if (claimsError) throw claimsError;
+
+        const claimReports: Report[] = (claims ?? []).map((claim) => {
+          const related = Array.isArray(claim.items)
+            ? claim.items[0]
+            : claim.items;
+
+          const rawStatus = String(claim.status ?? "pending").toLowerCase();
+          const trackingStatus =
+            ["approved", "accepted", "scheduled", "returning"].includes(rawStatus)
+              ? "นัดรับคืน"
+              : ["returned", "completed", "resolved"].includes(rawStatus)
+                ? "รับคืนสำเร็จ"
+                : ["rejected", "declined", "cancelled", "canceled"].includes(rawStatus)
+                  ? "แจ้งรายการแล้ว"
+                  : "ยืนยันเจ้าของ";
+
+          return {
+            id: `claim-${claim.id}`,
+            itemId: claim.item_id,
+            name: related?.name ?? `คำร้องยืนยันสิทธิ์ #${claim.id}`,
+            type: related?.type ?? "found",
+            category: related?.category,
+            color: related?.color,
+            brand: related?.brand,
+            description: related?.description,
+            location: related?.location,
+            date: claim.created_at,
+            createdAt: claim.created_at,
+            image: related?.image,
+            status: trackingStatus,
+            claimStatus: rawStatus,
+            trackingSource: "claim",
+          };
+        });
+
+        // รวมรายการที่ผู้ใช้แจ้งกับคำร้องของผู้ใช้ โดยไม่แสดงซ้ำในกรณีเดียวกัน
+        const merged = [...claimReports, ...itemReports];
+        const unique = merged.filter((report, index, all) =>
+          all.findIndex((candidate) => candidate.id === report.id) === index
+        );
+
+        if (!cancelled) setReports(unique);
+      } catch (error) {
+        console.error("Findly tracking Supabase error:", error);
+        if (!cancelled) {
+          setReports([]);
+        }
+      } finally {
+        if (!cancelled) setReady(true);
       }
-    } catch (error) {
-      console.error("Findly tracking error:", error);
-    } finally {
-      setReady(true);
     }
+
+    void loadTrackingData();
+
+    return () => {
+      cancelled = true;
+    };
   }, []);
 
   const enrichedReports = useMemo(() => {

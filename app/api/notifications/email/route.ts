@@ -102,17 +102,20 @@ export async function POST(request: Request) {
       `,
     });
 
-    if (error) {
-      console.error("Resend error:", error);
+  if (error) {
+  console.error("Resend error:", {
+    name: error.name,
+    message: error.message,
+  });
 
-      return NextResponse.json(
-        {
-          error:
-            "ส่งอีเมลไม่สำเร็จ กรุณาตรวจสอบการตั้งค่า Resend",
-        },
-        { status: 502 }
-      );
-    }
+  return NextResponse.json(
+    {
+      error: "ส่งอีเมลไม่สำเร็จ",
+      details: error.message,
+    },
+    { status: 502 }
+  );
+}
 
     return NextResponse.json({
       success: true,

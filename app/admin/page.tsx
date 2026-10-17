@@ -1,6 +1,8 @@
 "use client";
 
 import { useEffect, useMemo, useState } from "react";
+import Link from "next/link";
+import { createClient } from "@/lib/supabase/client";
 
 type Report = {
   id: string;
@@ -37,7 +39,18 @@ type UserRecord = {
   status: string;
 };
 
-type Tab = "overview" | "reports" | "issues" | "users";
+type Claim = {
+  id: string;
+  item_id: string;
+  claimant_id: string;
+  status: string;
+  created_at?: string;
+  itemName?: string;
+  itemLocation?: string;
+  itemType?: string;
+};
+
+type Tab = "overview" | "reports" | "claims" | "issues" | "users";
 
 const REPORTS_KEY = "findly_reports";
 const ISSUES_KEY = "findly_issues";
@@ -148,6 +161,9 @@ export default function AdminPage() {
   const [reports, setReports] = useState<Report[]>([]);
   const [issues, setIssues] = useState<Issue[]>([]);
   const [users, setUsers] = useState<UserRecord[]>([]);
+  const [claims, setClaims] = useState<Claim[]>([]);
+  const [accessState, setAccessState] = useState<"checking" | "allowed" | "denied">("checking");
+  const [adminEmail, setAdminEmail] = useState("");
   const [search, setSearch] = useState("");
   const [typeFilter, setTypeFilter] = useState("ทั้งหมด");
   const [statusFilter, setStatusFilter] = useState("ทั้งหมด");
@@ -155,12 +171,98 @@ export default function AdminPage() {
   const [notice, setNotice] = useState("");
 
   useEffect(() => {
-    const loadedReports = readArray<Report>(REPORTS_KEY).map(normalizeReport);
+    let cancelled = false;
 
-    setReports(loadedReports);
-    setIssues(readArray<Issue>(ISSUES_KEY));
-    setUsers(readArray<UserRecord>(USERS_KEY));
-    setLoaded(true);
+    async function loadAdminData() {
+      try {
+        const supabase = createClient();
+        const { data: authData, error: authError } = await supabase.auth.getUser();
+        if (authError || !authData.user) {
+          if (!cancelled) {
+            setAccessState("denied");
+            setLoaded(true);
+          }
+          return;
+        }
+
+        const { data: adminAllowed, error: adminError } = await supabase.rpc("is_findly_admin");
+        if (adminError || adminAllowed !== true) {
+          if (!cancelled) {
+            setAccessState("denied");
+            setLoaded(true);
+          }
+          return;
+        }
+
+        if (cancelled) return;
+        setAdminEmail(authData.user.email || "");
+        setAccessState("allowed");
+
+        const [itemsResult, claimsResult] = await Promise.all([
+          supabase
+            .from("items")
+            .select("id,name,category,type,location,date,image,status,description,created_at,created_by,color,brand,contact")
+            .order("created_at", { ascending: false }),
+          supabase
+            .from("item_claims")
+            .select("id,item_id,claimant_id,status,created_at")
+            .order("created_at", { ascending: false }),
+        ]);
+
+        if (itemsResult.error) throw itemsResult.error;
+        if (claimsResult.error) throw claimsResult.error;
+
+        const items = itemsResult.data || [];
+        const mappedReports: Report[] = items.map((item: any) => ({
+          id: String(item.id),
+          type: item.type,
+          name: item.name,
+          category: item.category,
+          color: item.color,
+          location: item.location,
+          date: item.date,
+          image: item.image,
+          status: item.status || "active",
+          description: item.description,
+          createdAt: item.created_at,
+          userName: item.created_by || "",
+          email: item.contact || "",
+        }));
+
+        const itemMap = new Map(items.map((item: any) => [String(item.id), item]));
+        const mappedClaims: Claim[] = (claimsResult.data || []).map((claim: any) => {
+          const item: any = itemMap.get(String(claim.item_id));
+          return {
+            id: String(claim.id),
+            item_id: String(claim.item_id),
+            claimant_id: String(claim.claimant_id),
+            status: claim.status || "pending",
+            created_at: claim.created_at,
+            itemName: item?.name || `รายการ #${claim.item_id}`,
+            itemLocation: item?.location || "-",
+            itemType: item?.type || "-",
+          };
+        });
+
+        if (!cancelled) {
+          setReports(mappedReports);
+          setClaims(mappedClaims);
+          // Issues and user lists are still demo-only because no Supabase tables were configured for them.
+          setIssues(readArray<Issue>(ISSUES_KEY));
+          setUsers(readArray<UserRecord>(USERS_KEY));
+          setLoaded(true);
+        }
+      } catch (error) {
+        console.error("Admin dashboard load failed:", error);
+        if (!cancelled) {
+          setNotice("โหลดข้อมูลจาก Supabase ไม่สำเร็จ กรุณาตรวจสอบสิทธิ์และการเชื่อมต่อ");
+          setLoaded(true);
+        }
+      }
+    }
+
+    void loadAdminData();
+    return () => { cancelled = true; };
   }, []);
 
   const lostCount = reports.filter(
@@ -205,62 +307,128 @@ export default function AdminPage() {
     });
   }, [reports, search, typeFilter, statusFilter]);
 
-  function updateReportStatus(id: string, newStatus: string) {
-    const updated = reports.map((report) =>
-      report.id === id ? { ...report, status: newStatus } : report
-    );
-
-    try {
-      localStorage.setItem(REPORTS_KEY, JSON.stringify(updated));
-      setReports(updated);
-      setNotice("อัปเดตสถานะประกาศแล้ว");
-    } catch {
-      setNotice("บันทึกไม่สำเร็จ กรุณาลองใหม่อีกครั้ง");
+  async function updateReportStatus(id: string, newStatus: string) {
+    const statusMap: Record<string, string> = {
+      "รอดำเนินการ": "active",
+      "กำลังตรวจสอบ": "active",
+      "กำลังดำเนินการ": "pending_return",
+      "เสร็จสิ้น": "returned",
+      "ปิดประกาศ": "closed",
+    };
+    const dbStatus = statusMap[newStatus] || newStatus;
+    const supabase = createClient();
+    const { error } = await supabase.from("items").update({ status: dbStatus }).eq("id", Number(id));
+    if (error) {
+      setNotice(`อัปเดตสถานะไม่สำเร็จ: ${error.message}`);
+      return;
     }
+    setReports((current) => current.map((report) => report.id === id ? { ...report, status: dbStatus } : report));
+    setNotice("บันทึกสถานะประกาศลง Supabase แล้ว");
   }
 
-  function deleteReport(id: string) {
-    const confirmed = window.confirm(
-      "ต้องการลบประกาศนี้ออกจากข้อมูลในเบราว์เซอร์ใช่หรือไม่?"
-    );
-
+  async function deleteReport(id: string) {
+    const confirmed = window.confirm("ต้องการปิดประกาศนี้หรือไม่? รายการจะไม่ถูกลบถาวร");
     if (!confirmed) return;
-
-    const updated = reports.filter((report) => report.id !== id);
-
-    try {
-      localStorage.setItem(REPORTS_KEY, JSON.stringify(updated));
-      setReports(updated);
-      setNotice("ลบประกาศแล้ว");
-    } catch {
-      setNotice("ลบประกาศไม่สำเร็จ");
-    }
+    await updateReportStatus(id, "ปิดประกาศ");
   }
 
   function updateIssueStatus(id: string, newStatus: string) {
-    const updated = issues.map((issue) =>
-      issue.id === id ? { ...issue, status: newStatus } : issue
-    );
-
+    const updated = issues.map((issue) => issue.id === id ? { ...issue, status: newStatus } : issue);
     try {
       localStorage.setItem(ISSUES_KEY, JSON.stringify(updated));
       setIssues(updated);
-      setNotice("อัปเดตสถานะรายงานแล้ว");
+      setNotice("อัปเดตสถานะรายงานปัญหาในเบราว์เซอร์แล้ว");
     } catch {
       setNotice("บันทึกไม่สำเร็จ กรุณาลองใหม่อีกครั้ง");
     }
   }
 
-  function refreshData() {
-    setReports(readArray<Report>(REPORTS_KEY).map(normalizeReport));
-    setIssues(readArray<Issue>(ISSUES_KEY));
-    setUsers(readArray<UserRecord>(USERS_KEY));
-    setNotice("โหลดข้อมูลล่าสุดจากเบราว์เซอร์แล้ว");
+  async function updateClaimStatus(claim: Claim, newStatus: "approved" | "rejected") {
+    const confirmed = window.confirm(newStatus === "approved" ? "ยืนยันอนุมัติคำร้องแสดงความเป็นเจ้าของใช่หรือไม่?" : "ยืนยันปฏิเสธคำร้องนี้ใช่หรือไม่?");
+    if (!confirmed) return;
+
+    setNotice("");
+    const supabase = createClient();
+    const { data: updatedClaim, error } = await supabase
+      .from("item_claims")
+      .update({ status: newStatus })
+      .eq("id", Number(claim.id))
+      .select("id,status")
+      .maybeSingle();
+
+    if (error) {
+      setNotice(`บันทึกผลคำร้องไม่สำเร็จ: ${error.message}`);
+      return;
+    }
+    // Supabase may return no error when RLS prevents the update and zero rows match.
+    if (!updatedClaim) {
+      setNotice("ยังบันทึกสถานะไม่ได้: ไม่พบคำร้องที่แก้ไขได้ หรือสิทธิ์ RLS ไม่อนุญาต โปรดตรวจสอบนโยบาย UPDATE ของ item_claims และยืนยันว่าบัญชีนี้เป็น Admin");
+      return;
+    }
+
+    if (newStatus === "approved") {
+      const { data: updatedItem, error: itemError } = await supabase
+        .from("items")
+        .update({ status: "pending_return" })
+        .eq("id", Number(claim.item_id))
+        .select("id,status")
+        .maybeSingle();
+
+      if (itemError || !updatedItem) {
+        setClaims((current) => current.map((item) => item.id === claim.id ? { ...item, status: newStatus } : item));
+        setNotice(`อนุมัติคำร้องแล้ว แต่เปลี่ยนสถานะสิ่งของไม่สำเร็จ${itemError ? `: ${itemError.message}` : ": ไม่พบรายการที่แก้ไขได้ หรือสิทธิ์ RLS ไม่อนุญาต"}`);
+        return;
+      }
+      setReports((current) => current.map((report) => report.id === claim.item_id ? { ...report, status: "pending_return" } : report));
+      setNotice("อนุมัติคำร้องแล้ว และเปลี่ยนสถานะสิ่งของเป็นรอนัดรับคืน");
+    } else {
+      setNotice("ปฏิเสธคำร้องและบันทึกลง Supabase แล้ว");
+    }
+    setClaims((current) => current.map((item) => item.id === claim.id ? { ...item, status: newStatus } : item));
+  }
+
+  async function refreshData() {
+    setLoaded(false);
+    try {
+      const supabase = createClient();
+      const { data: authData } = await supabase.auth.getUser();
+      if (!authData.user) {
+        setAccessState("denied");
+        setLoaded(true);
+        return;
+      }
+      const { data: allowed, error: roleError } = await supabase.rpc("is_findly_admin");
+      if (roleError || allowed !== true) {
+        setAccessState("denied");
+        setLoaded(true);
+        return;
+      }
+      const [{ data: items, error: itemsError }, { data: claimRows, error: claimsError }] = await Promise.all([
+        supabase.from("items").select("id,name,category,type,location,date,image,status,description,created_at,created_by,color,brand,contact").order("created_at", { ascending: false }),
+        supabase.from("item_claims").select("id,item_id,claimant_id,status,created_at").order("created_at", { ascending: false }),
+      ]);
+      if (itemsError) throw itemsError;
+      if (claimsError) throw claimsError;
+      const safeItems = items || [];
+      setReports(safeItems.map((item: any) => ({ id: String(item.id), type: item.type, name: item.name, category: item.category, color: item.color, location: item.location, date: item.date, image: item.image, status: item.status || "active", description: item.description, createdAt: item.created_at, userName: item.created_by || "", email: item.contact || "" })));
+      const itemMap = new Map(safeItems.map((item: any) => [String(item.id), item]));
+      setClaims((claimRows || []).map((claim: any) => { const item: any = itemMap.get(String(claim.item_id)); return { id: String(claim.id), item_id: String(claim.item_id), claimant_id: String(claim.claimant_id), status: claim.status || "pending", created_at: claim.created_at, itemName: item?.name || `รายการ #${claim.item_id}`, itemLocation: item?.location || "-", itemType: item?.type || "-" }; }));
+      setIssues(readArray<Issue>(ISSUES_KEY));
+      setUsers(readArray<UserRecord>(USERS_KEY));
+      setAccessState("allowed");
+      setNotice("โหลดประกาศและคำร้องล่าสุดจาก Supabase แล้ว");
+    } catch (error) {
+      console.error(error);
+      setNotice("โหลดข้อมูลล่าสุดไม่สำเร็จ กรุณาลองใหม่อีกครั้ง");
+    } finally {
+      setLoaded(true);
+    }
   }
 
   const navItems: { id: Tab; label: string; icon: string }[] = [
     { id: "overview", label: "ภาพรวมระบบ", icon: "📊" },
     { id: "reports", label: "จัดการประกาศ", icon: "📦" },
+    { id: "claims", label: "คำร้องเจ้าของ", icon: "🪪" },
     { id: "issues", label: "รายงานปัญหา", icon: "🚨" },
     { id: "users", label: "จัดการผู้ใช้", icon: "👥" },
   ];
@@ -269,6 +437,19 @@ export default function AdminPage() {
     return (
       <main className="flex min-h-screen items-center justify-center bg-[#FFFAF7] text-[#493D55]">
         กำลังโหลดข้อมูลผู้ดูแลระบบ...
+      </main>
+    );
+  }
+
+  if (accessState !== "allowed") {
+    return (
+      <main className="flex min-h-screen items-center justify-center bg-[#FFFAF7] px-4 text-[#493D55]">
+        <section className="w-full max-w-lg rounded-3xl border border-[#EEE6F5] bg-white p-8 text-center shadow-sm">
+          <div className="text-5xl">🔐</div>
+          <h1 className="mt-4 text-2xl font-extrabold">ไม่สามารถเข้าถึง Admin Dashboard</h1>
+          <p className="mt-3 text-sm leading-6 text-[#8B7D94]">กรุณาเข้าสู่ระบบด้วยบัญชีที่ได้รับสิทธิ์ผู้ดูแล Findly หากเพิ่มสิทธิ์แล้วแต่ยังเข้าไม่ได้ ให้ตรวจสอบว่ากำลังใช้บัญชีเดียวกัน</p>
+          <Link href="/login" className="mt-6 inline-flex rounded-xl bg-[#B9A0F8] px-5 py-3 text-sm font-bold text-[#493D55] hover:bg-[#AA8CEB]">ไปหน้าเข้าสู่ระบบ</Link>
+        </section>
       </main>
     );
   }
@@ -288,10 +469,12 @@ export default function AdminPage() {
             </h1>
 
             <p className="mt-3 text-sm text-[#8B7D94] sm:text-base">
-              ภาพรวมประกาศและการจัดการข้อมูลภายในระบบ
+              ภาพรวมประกาศและคำร้องจากฐานข้อมูล Findly
             </p>
           </div>
 
+          <div className="flex flex-col items-start gap-2 sm:flex-row sm:items-center">
+          {adminEmail && <span className="text-xs text-[#8B7D94]">Admin: {adminEmail}</span>}
           <button
             type="button"
             onClick={refreshData}
@@ -299,6 +482,7 @@ export default function AdminPage() {
           >
             ↻ โหลดข้อมูลล่าสุด
           </button>
+          </div>
         </header>
 
         {notice && (
@@ -347,7 +531,7 @@ export default function AdminPage() {
             <div className="mb-6">
               <h2 className="text-xl font-bold">ภาพรวมระบบ</h2>
               <p className="mt-1 text-sm text-[#8B7D94]">
-                สรุปข้อมูลที่อ่านได้จากเบราว์เซอร์นี้
+                สรุปประกาศที่อ่านได้จาก Supabase
               </p>
             </div>
 
@@ -382,7 +566,7 @@ export default function AdminPage() {
               <section className="rounded-3xl border border-[#EEE6F5] bg-white p-6">
                 <h3 className="text-lg font-bold">📋 ประกาศล่าสุด</h3>
                 <p className="mt-1 text-sm text-[#8B7D94]">
-                  รายการล่าสุดที่บันทึกในเบราว์เซอร์
+                  รายการล่าสุดจากฐานข้อมูล Supabase
                 </p>
 
                 {reports.length === 0 ? (
@@ -390,7 +574,7 @@ export default function AdminPage() {
                     <p className="text-3xl">📭</p>
                     <p className="mt-2 font-semibold">ยังไม่มีประกาศ</p>
                     <p className="mt-1 text-sm text-[#8B7D94]">
-                      เมื่อมีข้อมูลใน findly_reports รายการจะแสดงที่นี่
+                      เมื่อมีประกาศในตาราง items รายการจะแสดงที่นี่
                     </p>
                   </div>
                 ) : (
@@ -434,7 +618,7 @@ export default function AdminPage() {
               <section className="rounded-3xl border border-[#EEE6F5] bg-white p-6">
                 <h3 className="text-lg font-bold">🛠️ สถานะข้อมูลระบบ</h3>
                 <p className="mt-1 text-sm text-[#8B7D94]">
-                  ข้อมูลที่มีอยู่ในเบราว์เซอร์ปัจจุบัน
+                  สถานะข้อมูลที่เชื่อมต่ออยู่
                 </p>
 
                 <div className="mt-5 space-y-3">
@@ -444,7 +628,12 @@ export default function AdminPage() {
                   </div>
 
                   <div className="flex items-center justify-between rounded-2xl bg-[#FAF7FF] p-4">
-                    <span className="text-sm">รายงานปัญหา</span>
+                    <span className="text-sm">คำร้องแสดงความเป็นเจ้าของ</span>
+                    <span className="font-bold">{claims.length} รายการ</span>
+                  </div>
+
+                  <div className="flex items-center justify-between rounded-2xl bg-[#FAF7FF] p-4">
+                    <span className="text-sm">รายงานปัญหา (ข้อมูลตัวอย่าง)</span>
                     <span className="font-bold">{issues.length} รายการ</span>
                   </div>
 
@@ -459,8 +648,7 @@ export default function AdminPage() {
                     ⚠️ โหมดทดสอบ
                   </p>
                   <p className="mt-1 text-sm leading-6 text-amber-800">
-                    หน้านี้ยังไม่มีระบบยืนยันสิทธิ์ผู้ดูแล และข้อมูล localStorage
-                    ไม่ใช่ฐานข้อมูลกลาง ผู้ใช้แต่ละเบราว์เซอร์อาจเห็นข้อมูลไม่เหมือนกัน
+                    หน้านี้ยังไม่มีระบบยืนยันสิทธิ์ผู้ดูแล และส่วนรายงานปัญหาและรายชื่อผู้ใช้ยังเป็นข้อมูลตัวอย่างจากเบราว์เซอร์
                   </p>
                 </div>
               </section>
@@ -474,7 +662,7 @@ export default function AdminPage() {
             <div className="mb-6">
               <h2 className="text-xl font-bold">จัดการประกาศ</h2>
               <p className="mt-1 text-sm text-[#8B7D94]">
-                ค้นหา กรอง เปลี่ยนสถานะ หรือลบประกาศในเบราว์เซอร์นี้
+                ค้นหา กรอง เปลี่ยนสถานะ หรือปิดประกาศใน Supabase
               </p>
             </div>
 
@@ -514,8 +702,7 @@ export default function AdminPage() {
                 <p className="text-4xl">📭</p>
                 <h3 className="mt-3 font-bold">ไม่พบประกาศ</h3>
                 <p className="mt-2 text-sm text-[#8B7D94]">
-                  ลองเปลี่ยนคำค้นหา หรือตรวจสอบว่าหน้าแจ้งประกาศบันทึกข้อมูลลง
-                  findly_reports แล้วหรือไม่
+                  ลองเปลี่ยนคำค้นหา หรือตรวจสอบข้อมูลในตาราง items ของ Supabase
                 </p>
               </div>
             ) : (
@@ -566,10 +753,10 @@ export default function AdminPage() {
                             className="max-w-40 rounded-lg border border-[#E4D9F0] bg-white px-2 py-2 text-xs outline-none focus:border-[#B9A0F8]"
                           >
                             {[...new Set([
-                              "รอดำเนินการ",
-                              "กำลังตรวจสอบ",
-                              "กำลังดำเนินการ",
-                              "เสร็จสิ้น",
+                              "active",
+                              "pending_return",
+                              "returned",
+                              "closed",
                               getReportStatus(report),
                             ])].map((status) => (
                               <option key={status}>{status}</option>
@@ -583,13 +770,55 @@ export default function AdminPage() {
                             onClick={() => deleteReport(report.id)}
                             className="rounded-lg bg-red-50 px-3 py-2 text-xs font-semibold text-red-600 transition hover:bg-red-100"
                           >
-                            ลบประกาศ
+                            ปิดประกาศ
                           </button>
                         </td>
                       </tr>
                     ))}
                   </tbody>
                 </table>
+              </div>
+            )}
+          </section>
+        )}
+
+        {/* Ownership claims */}
+        {activeTab === "claims" && (
+          <section>
+            <div className="mb-6">
+              <h2 className="text-xl font-bold">คำร้องแสดงความเป็นเจ้าของ</h2>
+              <p className="mt-1 text-sm text-[#8B7D94]">ตรวจสอบคำร้องที่บันทึกใน Supabase และอนุมัติหรือปฏิเสธคำร้อง</p>
+            </div>
+            {claims.length === 0 ? (
+              <div className="rounded-3xl border border-dashed border-[#DCCFF0] bg-white p-10 text-center">
+                <p className="text-4xl">🪪</p><h3 className="mt-3 font-bold">ยังไม่มีคำร้อง</h3>
+                <p className="mt-2 text-sm text-[#8B7D94]">คำร้องจากตาราง item_claims จะแสดงที่นี่</p>
+              </div>
+            ) : (
+              <div className="space-y-4">
+                {claims.map((claim) => {
+                  const status = (claim.status || "pending").toLowerCase();
+                  const pending = ["pending", "submitted", "under_review"].includes(status);
+                  return (
+                    <article key={claim.id} className="rounded-3xl border border-[#EEE6F5] bg-white p-5">
+                      <div className="flex flex-col justify-between gap-4 lg:flex-row lg:items-center">
+                        <div className="min-w-0">
+                          <h3 className="font-bold">{claim.itemName}</h3>
+                          <p className="mt-1 text-sm text-[#8B7D94]">คำร้อง #{claim.id} · รายการ #{claim.item_id}</p>
+                          <p className="mt-1 text-sm text-[#8B7D94]">สถานที่: {claim.itemLocation} · ประเภท: {getReportType({ id: String(claim.item_id), type: claim.itemType })}</p>
+                          <p className="mt-1 break-all text-xs text-[#A79BAF]">ผู้ยื่นคำร้อง UID: {claim.claimant_id}</p>
+                          <p className="mt-2 text-xs text-[#8B7D94]">ส่งคำร้องเมื่อ {formatDate(claim.created_at)} · สถานะ: <strong>{claim.status}</strong></p>
+                        </div>
+                        {pending ? (
+                          <div className="flex shrink-0 gap-2">
+                            <button type="button" onClick={() => void updateClaimStatus(claim, "approved")} className="rounded-xl bg-emerald-100 px-4 py-2 text-sm font-bold text-emerald-800 hover:bg-emerald-200">อนุมัติ</button>
+                            <button type="button" onClick={() => void updateClaimStatus(claim, "rejected")} className="rounded-xl bg-red-50 px-4 py-2 text-sm font-bold text-red-700 hover:bg-red-100">ปฏิเสธ</button>
+                          </div>
+                        ) : <span className="rounded-full bg-[#F5F0FF] px-4 py-2 text-sm font-semibold">ดำเนินการแล้ว</span>}
+                      </div>
+                    </article>
+                  );
+                })}
               </div>
             )}
           </section>
@@ -660,7 +889,7 @@ export default function AdminPage() {
             <div className="mb-6">
               <h2 className="text-xl font-bold">จัดการผู้ใช้</h2>
               <p className="mt-1 text-sm text-[#8B7D94]">
-                แสดงข้อมูลผู้ใช้ที่มีอยู่ในเบราว์เซอร์นี้
+                ข้อมูลตัวอย่างผู้ใช้จากเบราว์เซอร์นี้ (ยังไม่ได้เชื่อม Supabase)
               </p>
             </div>
 
@@ -710,10 +939,7 @@ export default function AdminPage() {
         <footer className="mt-10 rounded-2xl border border-[#E8DDFB] bg-[#F5F0FF] p-5">
           <h3 className="font-bold">💡 หมายเหตุสำหรับการพัฒนา</h3>
           <p className="mt-2 text-sm leading-6 text-[#756581]">
-            หน้านี้เป็น Admin Dashboard สำหรับทดสอบบนเครื่องของคุณเท่านั้น
-            การเปลี่ยนสถานะและลบประกาศจะเขียนข้อมูลลง localStorage ของเบราว์เซอร์นี้
-            ยังไม่มีระบบล็อกอินผู้ดูแล การกำหนดสิทธิ์ หรือฐานข้อมูลส่วนกลาง
-            ก่อนนำไปใช้งานจริงต้องเพิ่มระบบเหล่านี้เพื่อป้องกันการเข้าถึงโดยไม่ได้รับอนุญาต
+            ประกาศและคำร้องแสดงความเป็นเจ้าของอ่านและแก้ไขผ่าน Supabase โดยตรวจสิทธิ์ผู้ดูแลจากฟังก์ชัน is_findly_admin ส่วนรายงานปัญหาและรายชื่อผู้ใช้ยังเป็นข้อมูลตัวอย่างใน localStorage และยังไม่ได้เชื่อมฐานข้อมูล
           </p>
         </footer>
       </div>

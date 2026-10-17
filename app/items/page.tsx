@@ -1,7 +1,6 @@
 "use client";
 
 import LogoutButton from "@/components/LogoutButton";
-import { SAMPLE_ITEMS } from "../../lib/sample-items";
 import { useEffect, useMemo, useState } from "react";
 import Link from "next/link";
 
@@ -11,21 +10,6 @@ import {
 } from "../../lib/smart-match";
 
 type ItemType = "lost" | "found";
-
-type SavedReport = {
-  id: string;
-  type: ItemType;
-  name: string;
-  category: string;
-  color: string;
-  brand: string;
-  description: string;
-  location: string;
-  date: string;
-  contact: string;
-  image: string;
-  createdAt: string;
-};
 
 type Item = {
   id: string | number;
@@ -38,8 +22,6 @@ type Item = {
   cardColor: string;
   colorName: string;
 };
-
-const items: Item[] = SAMPLE_ITEMS;
 
 const categories = [
   "ทั้งหมด",
@@ -64,7 +46,6 @@ export default function ItemsPage() {
   const [search, setSearch] = useState("");
   const [category, setCategory] = useState("ทั้งหมด");
   const [type, setType] = useState("ทั้งหมด");
-  const [savedReports, setSavedReports] = useState<SavedReport[]>([]);
   const [databaseItems, setDatabaseItems] = useState<Item[]>([]);
 
   // ตรวจสอบสถานะเข้าสู่ระบบจาก Supabase ก่อนแสดงปุ่มออกจากระบบ
@@ -107,79 +88,6 @@ export default function ItemsPage() {
     return () => {
       active = false;
       unsubscribe?.();
-    };
-  }, []);
-
-  // โหลดรายการที่ผู้ใช้แจ้งไว้จาก localStorage
-  useEffect(() => {
-    function loadReports() {
-      try {
-        const stored = localStorage.getItem("findly_reports");
-
-        if (!stored) {
-          setSavedReports([]);
-          return;
-        }
-
-        const parsed: unknown = JSON.parse(stored);
-
-        if (!Array.isArray(parsed)) {
-          setSavedReports([]);
-          return;
-        }
-
-        const validReports: SavedReport[] = parsed
-          .filter(
-            (report): report is SavedReport =>
-              report !== null &&
-              typeof report === "object" &&
-              typeof report.id === "string" &&
-              typeof report.name === "string" &&
-              typeof report.category === "string" &&
-              (report.type === "lost" || report.type === "found")
-          )
-          .map((report) => ({
-            id: report.id,
-            type: report.type,
-            name: report.name,
-            category: report.category,
-            color:
-              typeof report.color === "string" ? report.color : "",
-            brand:
-              typeof report.brand === "string" ? report.brand : "",
-            description:
-              typeof report.description === "string"
-                ? report.description
-                : "",
-            location:
-              typeof report.location === "string"
-                ? report.location
-                : "",
-            date: typeof report.date === "string" ? report.date : "",
-            contact:
-              typeof report.contact === "string" ? report.contact : "",
-            image: typeof report.image === "string" ? report.image : "",
-            createdAt:
-              typeof report.createdAt === "string"
-                ? report.createdAt
-                : "",
-          }));
-
-        setSavedReports(validReports);
-      } catch (error) {
-        console.error("ไม่สามารถอ่านข้อมูล Findly ได้:", error);
-        setSavedReports([]);
-      }
-    }
-
-    loadReports();
-
-    window.addEventListener("focus", loadReports);
-    window.addEventListener("storage", loadReports);
-
-    return () => {
-      window.removeEventListener("focus", loadReports);
-      window.removeEventListener("storage", loadReports);
     };
   }, []);
 
@@ -236,15 +144,8 @@ useEffect(() => {
   };
 }, []);
 
-  // รวมรายการที่ผู้ใช้แจ้งกับข้อมูลตัวอย่าง
-  // รวมรายการจาก Supabase และข้อมูลตัวอย่าง
-// ให้ Supabase เป็นแหล่งข้อมูลหลักของรายการจริง
-const allItems: Item[] = useMemo(() => {
-  return [
-    ...databaseItems,
-    ...items,
-  ];
-}, [databaseItems]);
+  // ใช้เฉพาะรายการจริงจาก Supabase ไม่รวมข้อมูลตัวอย่างในโค้ด
+  const allItems: Item[] = useMemo(() => databaseItems, [databaseItems]);
 
   // เตรียมข้อมูลสำหรับระบบ Smart Match
   const matchReports: MatchReport[] = useMemo(
@@ -890,7 +791,7 @@ const allItems: Item[] = useMemo(() => {
           display: grid;
           grid-template-columns: repeat(4, minmax(0, 1fr));
           align-items: stretch;
-          gap: 22px;
+          gap: 18px;
         }
 
         .card {
@@ -899,39 +800,34 @@ const allItems: Item[] = useMemo(() => {
           min-width: 0;
           height: 100%;
           overflow: hidden;
-          border: 1px solid #eee6f6;
-          border-radius: 19px;
+          border: 1px solid #e9e3ef;
+          border-radius: 15px;
           background: #fff;
-          box-shadow: 0 7px 22px rgba(76, 53, 112, 0.055);
+          box-shadow: 0 3px 12px rgba(76, 53, 112, 0.045);
           animation: riseIn 0.4s ease both;
           transition:
-            transform 0.25s ease,
-            box-shadow 0.25s ease,
-            border-color 0.25s ease;
+            transform 0.2s ease,
+            box-shadow 0.2s ease,
+            border-color 0.2s ease;
         }
 
         .card:hover {
-          transform: translateY(-6px);
-          border-color: #d9cbf3;
-          box-shadow: 0 18px 36px rgba(76, 53, 112, 0.12);
+          transform: translateY(-2px);
+          border-color: #d5c7ee;
+          box-shadow: 0 8px 20px rgba(76, 53, 112, 0.085);
         }
 
         .photo {
           position: relative;
           display: flex;
-          height: 250px;
+          height: 210px;
           flex-shrink: 0;
           align-items: center;
           justify-content: center;
           overflow: hidden;
-          padding: 0;
-          background:
-            radial-gradient(
-              ellipse at 50% 30%,
-              rgba(255, 255, 255, 0.98),
-              transparent 55%
-            ),
-            linear-gradient(145deg, #f3eaff 0%, #f8eaf3 100%);
+          padding: 10px;
+          background: linear-gradient(145deg, #f7f3fc 0%, #f2eaf8 100%);
+          border-bottom: 1px solid rgba(232, 222, 244, 0.8);
         }
 
         .photo::after {
@@ -940,30 +836,35 @@ const allItems: Item[] = useMemo(() => {
           inset: 0;
           background: linear-gradient(
             180deg,
-            rgba(255, 255, 255, 0.04),
-            transparent 55%,
-            rgba(85, 65, 125, 0.035)
+            rgba(255, 255, 255, 0.12),
+            transparent 35%,
+            rgba(85, 65, 125, 0.025)
           );
           content: "";
           pointer-events: none;
         }
 
-        .photo img {
-          position: absolute;
-          z-index: 0;
-          inset: 0;
-          display: block;
-          width: 100%;
-          height: 100%;
-          object-fit: contain;
-          object-position: center;
-          padding: 14px;
-          mix-blend-mode: multiply;
-          transition: transform 0.35s ease;
-        }
+      .photo img {
+  position: relative;
+  z-index: 0;
+  display: block;
+  width: 100%;
+  height: 100%;
+  object-fit: contain;
+  object-position: center;
+  padding: 8px;
+  mix-blend-mode: normal;
+  filter: none;
+  transition: transform 0.25s ease;
+}
+
+.card:hover .photo img {
+  transform: scale(1.02);
+}
 
         .card:hover .photo img {
           transform: scale(1.035);
+          filter: drop-shadow(0 10px 12px rgba(64, 45, 91, 0.12));
         }
 
         .photo-placeholder {
@@ -973,14 +874,9 @@ const allItems: Item[] = useMemo(() => {
           flex-direction: column;
           align-items: center;
           justify-content: center;
-          gap: 10px;
-          background:
-            radial-gradient(
-              circle at 50% 35%,
-              rgba(255, 255, 255, 0.98),
-              transparent 46%
-            ),
-            linear-gradient(145deg, #f4edff, #f9edf4);
+          gap: 9px;
+          padding: 16px;
+          background: linear-gradient(145deg, #f7f3fc 0%, #f0e7f6 100%);
           color: #8872b4;
           text-align: center;
         }
@@ -999,7 +895,8 @@ const allItems: Item[] = useMemo(() => {
           background: rgba(255, 255, 255, 0.8);
           color: #8a70c2;
           box-shadow: 0 8px 20px rgba(88, 64, 133, 0.07);
-          font-size: 25px;
+          font-size: 29px;
+          line-height: 1;
         }
 
         .photo-placeholder strong {
@@ -1018,15 +915,15 @@ const allItems: Item[] = useMemo(() => {
         .badge {
           position: absolute;
           z-index: 2;
-          top: 12px;
-          left: 12px;
+          top: 10px;
+          left: 10px;
           display: inline-flex;
           align-items: center;
           gap: 6px;
           padding: 7px 10px;
           border: 1px solid transparent;
-          border-radius: 8px;
-          box-shadow: 0 4px 12px rgba(50, 35, 75, 0.07);
+          border-radius: 7px;
+          box-shadow: 0 2px 6px rgba(50, 35, 75, 0.055);
           backdrop-filter: blur(8px);
           font-size: 10px;
           font-weight: 800;
@@ -1050,7 +947,7 @@ const allItems: Item[] = useMemo(() => {
           display: flex;
           flex: 1;
           flex-direction: column;
-          padding: 17px 17px 16px;
+          padding: 15px 15px 14px;
         }
 
         .category-label {
@@ -1071,9 +968,9 @@ const allItems: Item[] = useMemo(() => {
           display: -webkit-box;
           min-height: 48px;
           overflow: hidden;
-          margin: 8px 0 15px;
+          margin: 7px 0 13px;
           color: #392a4d;
-          font-size: 16px;
+          font-size: 15px;
           font-weight: 800;
           line-height: 1.5;
           overflow-wrap: anywhere;
@@ -1122,11 +1019,11 @@ const allItems: Item[] = useMemo(() => {
           align-items: center;
           gap: 7px;
           min-width: 0;
-          margin-top: 13px;
-          padding: 10px;
-          border: 1px solid #e9defb;
-          border-radius: 10px;
-          background: linear-gradient(110deg, #faf6ff, #fff9fc);
+          margin-top: 12px;
+          padding: 9px 10px;
+          border: 1px solid #e8e0f3;
+          border-radius: 9px;
+          background: #faf8fd;
         }
 
         .match-compact-icon {
@@ -1167,10 +1064,10 @@ const allItems: Item[] = useMemo(() => {
         .card-bottom {
           display: flex;
           flex-direction: column;
-          gap: 13px;
+          gap: 11px;
           margin-top: auto;
-          padding-top: 15px;
-          border-top: 1px solid #f1ecf6;
+          padding-top: 13px;
+          border-top: 1px solid #f0ebf4;
         }
 
         .date {
@@ -1196,10 +1093,10 @@ const allItems: Item[] = useMemo(() => {
           align-items: center;
           justify-content: center;
           min-width: 0;
-          min-height: 39px;
-          padding: 9px 10px;
-          border: 1px solid #e9e1f1;
-          border-radius: 9px;
+          min-height: 38px;
+          padding: 8px 8px;
+          border: 1px solid #e6dfed;
+          border-radius: 8px;
           text-align: center;
           text-decoration: none;
           font-family: inherit;
@@ -1214,8 +1111,8 @@ const allItems: Item[] = useMemo(() => {
         }
 
         .card-actions .clue-link {
-          border-color: #e4d7fb;
-          background: #f2ebff;
+          border-color: #e4d9f6;
+          background: #f6f1ff;
           color: #6849a2;
         }
 
@@ -1381,11 +1278,11 @@ const allItems: Item[] = useMemo(() => {
         @media (max-width: 1100px) {
           .grid {
             grid-template-columns: repeat(3, minmax(0, 1fr));
-            gap: 18px;
+            gap: 16px;
           }
 
           .photo {
-            height: 230px;
+            height: 205px;
           }
 
           .hero {
@@ -1522,11 +1419,11 @@ const allItems: Item[] = useMemo(() => {
 
           .grid {
             grid-template-columns: repeat(2, minmax(0, 1fr));
-            gap: 13px;
+            gap: 12px;
           }
 
           .photo {
-            height: 180px;
+            height: 165px;
           }
 
           .card-content {
@@ -1599,7 +1496,7 @@ const allItems: Item[] = useMemo(() => {
           }
 
           .photo {
-            height: 220px;
+            height: 205px;
           }
 
           .card-content {
@@ -1853,7 +1750,7 @@ const allItems: Item[] = useMemo(() => {
                           className="placeholder-symbol"
                           aria-hidden="true"
                         >
-                          ▧
+                          📦
                         </span>
                         <strong>รายการนี้ไม่ได้แนบรูปภาพ</strong>
                         <small>
@@ -1988,7 +1885,7 @@ const allItems: Item[] = useMemo(() => {
         <div>
           <strong>เกร็ดเล็ก ๆ จาก Findly</strong>
           <br />
-          รายการที่เห็นในขณะนี้เป็นข้อมูลตัวอย่าง
+          รายการที่แสดงมาจากฐานข้อมูลของ Findly
           หากพบสิ่งของที่คล้ายกับของที่หายไป
           ควรตรวจสอบรายละเอียดเพิ่มเติมก่อน
           เพื่อช่วยให้สิ่งของกลับคืนสู่เจ้าของได้อย่างปลอดภัย

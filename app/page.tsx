@@ -2,6 +2,18 @@
 
 import { useEffect, useState } from "react";
 import { createClient } from "@/lib/supabase/client";
+import Link from "next/link";
+
+const quickLinks = [
+  { label: "ค้นหาสิ่งของ", href: "/items", icon: "🔎", description: "ค้นหารายการของหายและของที่พบ" },
+  { label: "แจ้งของหาย / พบของ", href: "/report", icon: "📝", description: "แจ้งข้อมูลสิ่งของเข้าสู่ระบบ" },
+  { label: "Smart Match", href: "/clue-matching", icon: "🎯", description: "ค้นหารายการที่อาจตรงกัน" },
+  { label: "ติดตามสถานะ", href: "/tracking", icon: "📍", description: "ตรวจสอบความคืบหน้าของสิ่งของ" },
+  { label: "ยืนยันความเป็นเจ้าของ", href: "/verification", icon: "🛡️", description: "ดำเนินการยืนยันสิทธิ์รับคืน" },
+  { label: "นัดหมายรับคืน", href: "/scheduling", icon: "📅", description: "จัดการนัดหมายรับสิ่งของคืน" },
+  { label: "Marketplace", href: "/marketplace", icon: "🛍️", description: "ดูรายการสินค้ามือสอง" },
+  { label: "การแจ้งเตือน", href: "/notifications", icon: "🔔", description: "ดูการแจ้งเตือนของคุณ" },
+];
 
 const categories = [
   {
@@ -92,36 +104,56 @@ function HomeAuthButtons() {
   const [isLoading, setIsLoading] = useState(true);
   const [isLoggedIn, setIsLoggedIn] = useState(false);
   const [isSigningOut, setIsSigningOut] = useState(false);
+  const [unreadCount, setUnreadCount] = useState(0);
 
   useEffect(() => {
     const supabase = createClient();
     let mounted = true;
 
-    const checkUser = async () => {
+    async function checkUser() {
       const { data, error } = await supabase.auth.getUser();
+
       if (!mounted) return;
-      setIsLoggedIn(!error && Boolean(data.user));
+
+      const loggedIn = !error && Boolean(data.user);
+      setIsLoggedIn(loggedIn);
       setIsLoading(false);
-    };
+
+      if (loggedIn && data.user) {
+        const { count, error: countError } = await supabase
+          .from("notifications")
+          .select("id", { count: "exact", head: true })
+          .eq("user_id", data.user.id)
+          .eq("is_read", false);
+
+        if (mounted && !countError) {
+          setUnreadCount(count ?? 0);
+        }
+      } else {
+        setUnreadCount(0);
+      }
+    }
 
     void checkUser();
 
-    const { data: authListener } = supabase.auth.onAuthStateChange((_event, session) => {
-      if (!mounted) return;
-      setIsLoggedIn(Boolean(session?.user));
-      setIsLoading(false);
+    const {
+      data: { subscription },
+    } = supabase.auth.onAuthStateChange(() => {
+      void checkUser();
     });
 
     return () => {
       mounted = false;
-      authListener.subscription.unsubscribe();
+      subscription.unsubscribe();
     };
   }, []);
 
   const handleSignOut = async () => {
     setIsSigningOut(true);
+
     const supabase = createClient();
     const { error } = await supabase.auth.signOut();
+
     setIsSigningOut(false);
 
     if (error) {
@@ -129,52 +161,63 @@ function HomeAuthButtons() {
       return;
     }
 
-    setIsLoggedIn(false);
     window.location.href = "/";
   };
 
-  if (isLoading) {
-    return (
-      <div className="flex items-center gap-2">
+  return (
+    <div className="flex items-center gap-2">
+      {!isLoading && isLoggedIn && (
+        <Link
+          href="/notifications"
+          aria-label={`การแจ้งเตือนที่ยังไม่ได้อ่าน ${unreadCount} รายการ`}
+          className="relative flex h-10 w-10 shrink-0 items-center justify-center rounded-full border border-[#E8DFFF] bg-white text-xl transition hover:bg-[#F3EDFF]"
+        >
+          🔔
+
+          {unreadCount > 0 && (
+            <span className="absolute -right-1 -top-1 flex h-5 min-w-5 items-center justify-center rounded-full bg-red-500 px-1 text-[10px] font-bold text-white">
+              {unreadCount > 99 ? "99+" : unreadCount}
+            </span>
+          )}
+        </Link>
+      )}
+
+      {isLoading ? (
         <span className="rounded-full bg-[#F3EDFF] px-4 py-2.5 text-sm font-semibold text-[#817493]">
           กำลังตรวจสอบ...
         </span>
-      </div>
-    );
-  }
+      ) : isLoggedIn ? (
+        <>
+          <span className="hidden rounded-full bg-[#E4F7EC] px-4 py-2.5 text-sm font-bold text-[#559B78] sm:inline-flex">
+            ✓ เข้าสู่ระบบแล้ว
+          </span>
 
-  if (isLoggedIn) {
-    return (
-      <div className="flex items-center gap-2">
-        <span className="hidden rounded-full bg-[#E4F7EC] px-4 py-2.5 text-sm font-bold text-[#559B78] sm:inline-flex">
-          ✓ เข้าสู่ระบบแล้ว
-        </span>
-        <button
-          type="button"
-          onClick={handleSignOut}
-          disabled={isSigningOut}
-          className="inline-flex items-center rounded-full border border-[#E8DFFF] bg-white/70 px-4 py-2.5 text-sm font-bold text-[#817493] transition-all duration-200 hover:border-[#CBB8FA] hover:bg-[#F8F5FF] hover:text-[#8B6CE0] disabled:opacity-60"
-        >
-          {isSigningOut ? "กำลังออก..." : "ออกจากระบบ"}
-        </button>
-      </div>
-    );
-  }
+          <button
+            type="button"
+            onClick={handleSignOut}
+            disabled={isSigningOut}
+            className="inline-flex items-center rounded-full border border-[#E8DFFF] bg-white/70 px-4 py-2.5 text-sm font-bold text-[#817493] transition-all duration-200 hover:border-[#CBB8FA] hover:bg-[#F8F5FF] hover:text-[#8B6CE0] disabled:opacity-60"
+          >
+            {isSigningOut ? "กำลังออก..." : "ออกจากระบบ"}
+          </button>
+        </>
+      ) : (
+        <>
+          <Link
+            href="/login"
+            className="hidden items-center rounded-full border border-[#E8DFFF] bg-white/70 px-5 py-2.5 text-sm font-bold text-[#817493] transition-all duration-200 hover:border-[#CBB8FA] hover:bg-[#F8F5FF] hover:text-[#8B6CE0] sm:inline-flex"
+          >
+            เข้าสู่ระบบ
+          </Link>
 
-  return (
-    <div className="flex items-center gap-2">
-      <a
-        href="/login"
-        className="hidden items-center rounded-full border border-[#E8DFFF] bg-white/70 px-5 py-2.5 text-sm font-bold text-[#817493] transition-all duration-200 hover:border-[#CBB8FA] hover:bg-[#F8F5FF] hover:text-[#8B6CE0] sm:inline-flex"
-      >
-        เข้าสู่ระบบ
-      </a>
-      <a
-        href="/signup"
-        className="inline-flex items-center justify-center rounded-full border border-white/60 bg-gradient-to-r from-[#B9A0F8] to-[#A58AEF] px-6 py-3 text-sm font-bold text-white shadow-[0_5px_15px_rgba(165,138,239,0.25)] transition-all duration-200 hover:-translate-y-0.5 hover:shadow-[0_8px_20px_rgba(165,138,239,0.35)] active:translate-y-0"
-      >
-        สมัครใช้งาน
-      </a>
+          <Link
+            href="/signup"
+            className="inline-flex items-center justify-center rounded-full border border-white/60 bg-gradient-to-r from-[#B9A0F8] to-[#A58AEF] px-6 py-3 text-sm font-bold text-white shadow-[0_5px_15px_rgba(165,138,239,0.25)] transition-all duration-200 hover:-translate-y-0.5 hover:shadow-[0_8px_20px_rgba(165,138,239,0.35)] active:translate-y-0"
+          >
+            สมัครใช้งาน
+          </Link>
+        </>
+      )}
     </div>
   );
 }
@@ -357,6 +400,55 @@ export default function Home() {
           </div>
         </div>
 
+      </section>
+
+      {/* Findly Quick Access */}
+      <section
+        aria-labelledby="quick-access-title"
+        className="bg-white/70 px-5 py-12 sm:px-8 sm:py-16"
+      >
+        <div className="mx-auto max-w-7xl">
+          <div className="mb-8 text-center">
+            <span className="mb-3 inline-flex rounded-full bg-[#F0E9FF] px-4 py-2 text-xs font-bold tracking-wider text-[#7457B7]">
+              FINDLY QUICK ACCESS
+            </span>
+            <h2
+              id="quick-access-title"
+              className="text-2xl font-extrabold text-[#49376F] sm:text-3xl"
+            >
+              เมนูลัด Findly
+            </h2>
+            <p className="mt-3 text-sm text-gray-500 sm:text-base">
+              เลือกฟังก์ชันที่ต้องการได้ทันที ไม่ต้องค้นหาเมนู
+            </p>
+          </div>
+
+          <div className="grid grid-cols-2 gap-3 sm:gap-4 lg:grid-cols-4">
+            {quickLinks.map((item) => (
+              <Link
+                key={item.href}
+                href={item.href}
+                className="group flex min-h-[170px] flex-col items-center justify-center rounded-3xl border border-[#EEE6FA] bg-white p-4 text-center shadow-sm transition duration-200 hover:-translate-y-1 hover:border-[#CBB8FA] hover:bg-[#FBF9FF] hover:shadow-lg focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-[#A58AEF]"
+              >
+                <span
+                  aria-hidden="true"
+                  className="mb-3 flex h-14 w-14 items-center justify-center rounded-2xl bg-[#F0E9FF] text-3xl transition group-hover:scale-110"
+                >
+                  {item.icon}
+                </span>
+                <span className="text-sm font-extrabold leading-5 text-[#49376F] sm:text-base">
+                  {item.label}
+                </span>
+                <span className="mt-2 text-xs leading-5 text-gray-500">
+                  {item.description}
+                </span>
+                <span className="mt-3 text-xs font-bold text-[#9479D7]">
+                  เปิดเมนู →
+                </span>
+              </Link>
+            ))}
+          </div>
+        </div>
       </section>
 
       {/* Categories */}

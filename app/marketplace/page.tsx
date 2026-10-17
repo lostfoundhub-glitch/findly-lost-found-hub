@@ -709,19 +709,28 @@ export default function MarketplacePage() {
                 key={item.id}
                 className="flex flex-col overflow-hidden rounded-3xl border border-[#EEE6F5] bg-white shadow-sm transition hover:-translate-y-1 hover:shadow-md"
               >
-                <div className="h-44 overflow-hidden">
+                <div className="h-44 w-full overflow-hidden bg-gradient-to-br from-[#F5F0FF] to-[#FFF0F5]">
                   {item.imageUrl ? (
                     <img
                       src={item.imageUrl}
                       alt={item.name}
-                      className="h-full w-full object-cover"
+                      className="block h-full w-full object-cover object-center"
                       onError={(event) => {
-                        event.currentTarget.style.display = "none";
+                        const image = event.currentTarget;
+                        image.style.display = "none";
+                        const fallback = image.nextElementSibling;
+                        if (fallback instanceof HTMLElement) {
+                          fallback.style.display = "flex";
+                        }
                       }}
                     />
-                  ) : (
+                  ) : null}
+                  <div
+                    className="h-full w-full items-center justify-center"
+                    style={{ display: item.imageUrl ? "none" : "flex" }}
+                  >
                     <ProductPlaceholder />
-                  )}
+                  </div>
                 </div>
 
                 <div className="flex flex-1 flex-col p-5">

@@ -2,23 +2,20 @@
 
 import Link from "next/link";
 import { useEffect, useMemo, useState } from "react";
+import { createClient } from "@/lib/supabase/client";
 
 type Report = {
-  id?: string | number;
-  type?: string;
-  name?: string;
-  itemName?: string;
-  title?: string;
-  category?: string;
-  color?: string;
-  brand?: string;
-  description?: string;
-  location?: string;
-  date?: string;
-  image?: string;
-  imageUrl?: string;
-  status?: string;
-  [key: string]: unknown;
+  id: number;
+  type: "lost" | "found";
+  name: string;
+  category: string;
+  color: string | null;
+  brand: string | null;
+  description: string | null;
+  location: string;
+  date: string;
+  image: string | null;
+  status: string;
 };
 
 type VerificationRequest = {
@@ -32,86 +29,20 @@ type VerificationRequest = {
   createdAt: string;
 };
 
-const PURPLE = "#B9A0F8";
-const TEXT = "#493D55";
-const MUTED = "#8B7D94";
-
-const questions = [
-  {
-    title: "สิ่งของของคุณมีลักษณะเด่นอะไร?",
-    description: "ระบุรายละเอียดที่ไม่ได้เปิดเผยไว้ในประกาศ",
-    placeholder: "เช่น มีสติกเกอร์ลายพิเศษติดอยู่ด้านหลัง",
-  },
-  {
-    title: "สิ่งของมีตำหนิหรือจุดสังเกตตรงไหน?",
-    description: "อธิบายตำแหน่งและลักษณะของตำหนิ",
-    placeholder: "เช่น มีรอยขีดข่วนบริเวณมุมซ้าย",
-  },
-  {
-    title: "ภายในหรือในชุดสิ่งของมีอะไรบ้าง?",
-    description: "ระบุสิ่งของที่อยู่ภายในหรืออุปกรณ์ที่มาด้วย",
-    placeholder: "เช่น มีพวงกุญแจและบัตรอยู่ในกระเป๋า",
-  },
-];
-
-function getItemName(report: Report) {
-  return String(
-    report.name ??
-      report.itemName ??
-      report.title ??
-      "ไม่ระบุชื่อสิ่งของ"
-  );
-}
-
-function getItemType(report: Report) {
-  const type = String(report.type ?? "").toLowerCase();
-
-  if (
-    type === "found" ||
-    type.includes("พบของ") ||
-    type.includes("ของที่พบ")
-  ) {
-    return "found";
-  }
-
-  return "lost";
-}
-
-function getItemId(report: Report, index: number) {
-  return String(
-    report.id ??
-      `${getItemName(report)}-${report.date ?? index}`
-  );
-}
+type ItemQuestion = {
+  id: number;
+  item_id: number;
+  question_text: string;
+  question_order: number;
+};
 
 function formatDate(value: string) {
   if (!value) return "ไม่ระบุวันที่";
-
   const date = new Date(value);
-
   if (Number.isNaN(date.getTime())) return value;
-
   return new Intl.DateTimeFormat("th-TH", {
-    day: "numeric",
-    month: "short",
-    year: "numeric",
+    day: "numeric", month: "short", year: "numeric",
   }).format(date);
-}
-
-function readRequests(): VerificationRequest[] {
-  try {
-    const raw = localStorage.getItem("findly_verification_requests");
-
-    if (!raw) return [];
-
-    const parsed: unknown = JSON.parse(raw);
-
-    return Array.isArray(parsed)
-      ? (parsed as VerificationRequest[])
-      : [];
-  } catch {
-    return [];
-  }
 }
 
 export default function VerificationPage() {
@@ -122,105 +53,243 @@ export default function VerificationPage() {
   const [additionalInfo, setAdditionalInfo] = useState("");
   const [activeTab, setActiveTab] = useState<"form" | "history">("form");
   const [ready, setReady] = useState(false);
+  const [saving, setSaving] = useState(false);
   const [error, setError] = useState("");
   const [success, setSuccess] = useState("");
+  const [questionsByItem, setQuestionsByItem] = useState<ItemQuestion[]>([]);
+  const [questionsLoading, setQuestionsLoading] = useState(false);
+  const supabase = useMemo(() => createClient(), []);
 
-  useEffect(() => {
+  async function loadData() {
+    setError("");
     try {
-      const rawReports = localStorage.getItem("findly_reports");
+      const { data: itemData, error: itemError } = await supabase
+        .from("items")
+        .select("id, name, category, type, color, brand, description, location, date, image, status")
+        .eq("status", "active")
+        .eq("type", "found")
+        .order("created_at", { ascending: false });
+      if (itemError) throw itemError;
+      setReports((itemData ?? []) as Report[]);
 
-      if (rawReports) {
-        const parsed: unknown = JSON.parse(rawReports);
+      const { data: authData, error: authError } = await supabase.auth.getUser();
 
-        if (Array.isArray(parsed)) {
-          setReports(parsed as Report[]);
-        }
+      // ไม่มี session ถือว่าเป็นผู้ใช้ที่ยังไม่ได้เข้าสู่ระบบ ไม่ควรทำให้การโหลด items ล้มเหลว
+      if (authError && authError.name !== "AuthSessionMissingError") {
+        throw authError;
       }
 
-      setRequests(readRequests());
+      if (!authError && authData.user) {
+        const { data: claimData, error: claimError } = await supabase
+          .from("item_claims")
+          .select("id, item_id, status, created_at, items(name, type), owner_verification_answers(answer_text, question_id, owner_verification_questions(question_text, question_order))")
+          .eq("claimant_id", authData.user.id)
+          .order("created_at", { ascending: false });
+        if (claimError) throw claimError;
+        const mapped: VerificationRequest[] = (claimData ?? []).map((claim: any) => {
+          const answerRows = [...(claim.owner_verification_answers ?? [])].sort(
+            (a: any, b: any) => (a.owner_verification_questions?.question_order ?? 0) - (b.owner_verification_questions?.question_order ?? 0)
+          );
+          return {
+            id: String(claim.id),
+            reportId: String(claim.item_id),
+            itemName: claim.items?.name ?? "ไม่ระบุชื่อสิ่งของ",
+            itemType: claim.items?.type ?? "lost",
+            answers: answerRows.map((a: any) => `${a.owner_verification_questions?.question_text ?? "คำตอบ"}: ${a.answer_text}`),
+            additionalInfo: "",
+            status: claim.status === "pending" ? "รอตรวจสอบ" : claim.status === "under_review" ? "กำลังตรวจสอบ" : claim.status === "approved" ? "อนุมัติแล้ว" : claim.status === "rejected" ? "ไม่อนุมัติ" : claim.status === "cancelled" ? "ยกเลิก" : claim.status,
+            createdAt: claim.created_at,
+          };
+        });
+        setRequests(mapped);
+      } else {
+        // ยังไม่เข้าสู่ระบบ: แสดงรายการสิ่งของได้ แต่ไม่มีประวัติคำขอของผู้ใช้
+        setRequests([]);
+      }
     } catch (err) {
       console.error("Findly verification loading error:", err);
-      setError("ไม่สามารถโหลดข้อมูลได้ กรุณาลองใหม่อีกครั้ง");
+      const message =
+        err instanceof Error
+          ? err.message
+          : typeof err === "object" && err !== null && "message" in err
+            ? String(err.message)
+            : "ไม่ทราบสาเหตุ";
+      setError(`โหลดข้อมูลไม่สำเร็จ: ${message}`);
     } finally {
       setReady(true);
     }
-  }, []);
-
-  const items = useMemo(() => {
-    return reports.map((report, index) => ({
-      ...report,
-      _id: getItemId(report, index),
-      _name: getItemName(report),
-      _type: getItemType(report),
-    }));
-  }, [reports]);
-
-  const selectedItem = items.find(
-    (item) => item._id === selectedId
-  );
-
-  const selectedRequests = requests.filter(
-    (request) => request.reportId === selectedId
-  );
-
-  function updateAnswer(index: number, value: string) {
-    setAnswers((previous) =>
-      previous.map((answer, answerIndex) =>
-        answerIndex === index ? value : answer
-      )
-    );
   }
 
-  function handleSubmit(event: React.FormEvent<HTMLFormElement>) {
-    event.preventDefault();
+  useEffect(() => { void loadData(); }, []);
 
+  useEffect(() => {
+  if (reports.length === 0) return;
+
+  const params = new URLSearchParams(window.location.search);
+  const requestedItemId = params.get("itemId");
+
+  if (!requestedItemId) return;
+
+  const itemExists = reports.some(
+    (report) => String(report.id) === requestedItemId
+  );
+
+  if (itemExists) {
+    setSelectedId(requestedItemId);
+    setActiveTab("form");
+  }
+}, [reports]);
+
+  const items = useMemo(() => reports.map((report) => ({
+    ...report,
+    _id: String(report.id),
+    _name: report.name,
+    _type: report.type,
+  })), [reports]);
+
+  const selectedItem = items.find((item) => item._id === selectedId);
+
+  useEffect(() => {
+    let cancelled = false;
+
+    async function loadQuestions() {
+      setQuestionsByItem([]);
+      setAnswers([]);
+
+      if (!selectedId) {
+        setQuestionsLoading(false);
+        return;
+      }
+
+      setError("");
+      setQuestionsLoading(true);
+
+      try {
+        // Questions are readable only by authenticated users under the current RLS policy.
+        // Check the current session before querying the protected table.
+        const { data: authData, error: authError } = await supabase.auth.getUser();
+
+        if (cancelled) return;
+
+        if (authError || !authData.user) {
+          setError("กรุณาเข้าสู่ระบบก่อนดูคำถามและส่งคำขอยืนยันความเป็นเจ้าของ");
+          return;
+        }
+
+        const { data, error: questionError } = await supabase
+          .from("owner_verification_questions")
+          .select("id, item_id, question_text, question_order")
+          .eq("item_id", Number(selectedId))
+          .order("question_order", { ascending: true });
+
+        if (cancelled) return;
+
+        if (questionError) {
+          console.error("Findly owner verification questions error:", {
+            message: questionError.message,
+            code: questionError.code,
+            details: questionError.details,
+            hint: questionError.hint,
+          });
+          setError(`โหลดคำถามไม่สำเร็จ: ${questionError.message || questionError.code || "ไม่ทราบสาเหตุ"}`);
+          return;
+        }
+
+        const rows = (data ?? []) as ItemQuestion[];
+        setQuestionsByItem(rows);
+        setAnswers(rows.map(() => ""));
+
+        if (rows.length === 0) {
+          setError("รายการนี้ยังไม่มีคำถามยืนยันเจ้าของ กรุณาให้เจ้าของหรือผู้ดูแลเพิ่มคำถามก่อน");
+        }
+      } catch (err) {
+        console.error("Findly owner verification questions unexpected error:", err);
+        setError(
+          err instanceof Error
+            ? `โหลดคำถามไม่สำเร็จ: ${err.message}`
+            : "โหลดคำถามไม่สำเร็จ กรุณาตรวจสอบการเชื่อมต่อ Supabase"
+        );
+      } finally {
+        if (!cancelled) setQuestionsLoading(false);
+      }
+    }
+
+    void loadQuestions();
+    return () => {
+      cancelled = true;
+    };
+  }, [selectedId, supabase]);
+
+  function updateAnswer(index: number, value: string) {
+    setAnswers((previous) => previous.map((answer, answerIndex) => answerIndex === index ? value : answer));
+  }
+
+  async function handleSubmit(event: React.FormEvent<HTMLFormElement>) {
+    event.preventDefault();
     setError("");
     setSuccess("");
-
     if (!selectedItem) {
       setError("กรุณาเลือกสิ่งของที่ต้องการยืนยันความเป็นเจ้าของ");
       return;
     }
-
-    if (answers.some((answer) => !answer.trim())) {
+    if (questionsByItem.length === 0) {
+      setError("รายการนี้ยังไม่มีคำถามยืนยันเจ้าของ กรุณาให้เจ้าของหรือผู้ดูแลเพิ่มคำถามก่อน");
+      return;
+    }
+    if (answers.length !== questionsByItem.length || answers.some((answer) => !answer.trim())) {
       setError("กรุณาตอบคำถามยืนยันความเป็นเจ้าของให้ครบทุกข้อ");
       return;
     }
 
-    const request: VerificationRequest = {
-      id: crypto.randomUUID(),
-      reportId: selectedItem._id,
-      itemName: selectedItem._name,
-      itemType: selectedItem._type,
-      answers: answers.map((answer) => answer.trim()),
-      additionalInfo: additionalInfo.trim(),
-      status: "รอตรวจสอบ",
-      createdAt: new Date().toISOString(),
-    };
-
+    setSaving(true);
     try {
-      const updated = [request, ...requests];
+      const { data: authData, error: authError } = await supabase.auth.getUser();
 
-      localStorage.setItem(
-        "findly_verification_requests",
-        JSON.stringify(updated)
-      );
+      // การส่งคำขอต้องมีผู้ใช้ที่เข้าสู่ระบบแล้ว
+      if (authError && authError.name !== "AuthSessionMissingError") {
+        throw authError;
+      }
+      if (!authData.user) {
+        setError("กรุณาเข้าสู่ระบบก่อนส่งคำขอยืนยันความเป็นเจ้าของ");
+        return;
+      }
 
-      setRequests(updated);
-      setAnswers(["", "", ""]);
+      const { data: claim, error: claimError } = await supabase
+        .from("item_claims")
+        .insert({ item_id: Number(selectedId), claimant_id: authData.user.id, status: "pending" })
+        .select("id, item_id, status, created_at")
+        .single();
+      if (claimError) throw claimError;
+
+      const answerRows = questionsByItem.map((question, index) => ({
+        claim_id: claim.id,
+        question_id: question.id,
+        answer_text: answers[index].trim() + (index === questionsByItem.length - 1 && additionalInfo.trim() ? `\nข้อมูลเพิ่มเติม: ${additionalInfo.trim()}` : ""),
+      }));
+      const { error: answerError } = await supabase.from("owner_verification_answers").insert(answerRows);
+      if (answerError) {
+        // Remove the incomplete claim if saving its answers failed.
+        await supabase.from("item_claims").delete().eq("id", claim.id).eq("claimant_id", authData.user.id);
+        throw answerError;
+      }
+
+      setAnswers(questionsByItem.map(() => ""));
       setAdditionalInfo("");
-      setSuccess(
-        "บันทึกคำขอในเบราว์เซอร์เรียบร้อยแล้ว โปรดทราบว่าคำขอนี้ยังไม่ได้ส่งให้เจ้าของหรือผู้ดูแลระบบตรวจสอบ"
-      );
-
+      setSuccess("ส่งคำขอยืนยันความเป็นเจ้าของและบันทึกคำตอบลงฐานข้อมูลแล้ว สถานะปัจจุบันคือรอตรวจสอบ");
       setActiveTab("history");
+      await loadData();
       window.scrollTo({ top: 0, behavior: "smooth" });
     } catch (err) {
-      console.error("Findly verification save error:", err);
-
-      setError(
-        "ไม่สามารถบันทึกคำขอได้ กรุณาตรวจสอบพื้นที่จัดเก็บข้อมูลแล้วลองใหม่"
-      );
+      console.error("Findly verification submit error:", err);
+      const message =
+        err instanceof Error
+          ? err.message
+          : typeof err === "object" && err !== null && "message" in err
+            ? String(err.message)
+            : "ไม่ทราบสาเหตุ";
+      setError(`ส่งคำขอไม่สำเร็จ: ${message}`);
+    } finally {
+      setSaving(false);
     }
   }
 
@@ -463,9 +532,21 @@ export default function VerificationPage() {
                 </p>
               )}
 
+              {selectedItem && questionsLoading && (
+                <p className="mt-2 text-xs leading-6 text-[#9B8AAF]">
+                  กำลังโหลดคำถามยืนยันเจ้าของ...
+                </p>
+              )}
+
+              {selectedItem && ready && !questionsLoading && !error && questionsByItem.length === 0 && (
+                <p className="mt-2 text-xs leading-6 text-[#A83E59]">
+                  รายการนี้ยังไม่มีคำถามยืนยันเจ้าของ จึงยังส่งคำขอไม่ได้
+                </p>
+              )}
+
               {ready && items.length === 0 && (
                 <div className="mt-3 rounded-2xl bg-[#FCF9FF] p-4 text-sm leading-6 text-[#8B7D94]">
-                  ยังไม่พบรายการในเบราว์เซอร์นี้
+                  ยังไม่มีรายการสิ่งของที่มีผู้พบและเปิดรับการยืนยันเจ้าของในขณะนี้
                   <Link
                     href="/report"
                     className="ml-1 font-extrabold text-[#8064B5] underline"
@@ -483,9 +564,7 @@ export default function VerificationPage() {
                     const image =
                       typeof selectedItem.image === "string"
                         ? selectedItem.image
-                        : typeof selectedItem.imageUrl === "string"
-                          ? selectedItem.imageUrl
-                          : "";
+                        : "";
 
                     return image ? (
                       // eslint-disable-next-line @next/next/no-img-element
@@ -534,18 +613,18 @@ export default function VerificationPage() {
             </div>
 
             <div className="mt-6 space-y-6">
-              {questions.map((question, index) => (
-                <div key={question.title}>
+              {questionsByItem.map((question, index) => (
+                <div key={question.id}>
                   <label
                     className="field-label"
                     htmlFor={`verification-answer-${index}`}
                   >
-                    {index + 1}. {question.title}{" "}
+                    {index + 1}. {question.question_text}{" "}
                     <span className="text-[#E58CA3]">*</span>
                   </label>
 
                   <p className="mb-2 text-xs leading-5 text-[#9B8AAF]">
-                    {question.description}
+                    ตอบตามรายละเอียดของสิ่งของที่คุณทราบ
                   </p>
 
                   <textarea
@@ -555,7 +634,7 @@ export default function VerificationPage() {
                     onChange={(event) =>
                       updateAnswer(index, event.target.value)
                     }
-                    placeholder={question.placeholder}
+                    placeholder="พิมพ์คำตอบของคุณ"
                     maxLength={500}
                     required
                   />
@@ -591,8 +670,7 @@ export default function VerificationPage() {
 
               <p className="mt-2 text-xs leading-6 text-[#9A8358]">
                 แบบฟอร์มนี้เป็นต้นแบบสำหรับเตรียมคำขอยืนยันความเป็นเจ้าของ
-                ขณะนี้ยังไม่มีการตรวจสอบคำตอบโดยเจ้าของหรือผู้ดูแลระบบ
-                และข้อมูลจะถูกบันทึกไว้ในเบราว์เซอร์เครื่องนี้เท่านั้น
+                คำตอบจะถูกบันทึกลงฐานข้อมูลเพื่อให้ผู้ดูแลตรวจสอบ คำขอยังไม่ถือว่าได้รับอนุมัติจนกว่าจะมีการตรวจสอบ
               </p>
             </div>
 
@@ -606,7 +684,7 @@ export default function VerificationPage() {
 
               <button
                 type="submit"
-                disabled={!ready || items.length === 0}
+                disabled={!ready || items.length === 0 || saving || questionsLoading || questionsByItem.length === 0}
                 className="rounded-full bg-[#B9A0F8] px-7 py-3.5 text-sm font-extrabold text-white shadow-lg shadow-[#B9A0F8]/20 transition hover:bg-[#A58BE8] disabled:cursor-not-allowed disabled:opacity-50"
               >
                 ส่งคำขอยืนยัน ✦
@@ -621,7 +699,7 @@ export default function VerificationPage() {
             <h2 className="text-xl font-black">ประวัติคำขอของฉัน</h2>
 
             <p className="mt-2 text-sm leading-6 text-[#9B8AAF]">
-              รายการคำขอที่บันทึกไว้ในเบราว์เซอร์เครื่องนี้
+              รายการคำขอที่บันทึกไว้ในฐานข้อมูล Supabase
             </p>
 
             {!ready ? (
@@ -677,15 +755,9 @@ export default function VerificationPage() {
                       </p>
 
                       <div className="mt-3 space-y-3">
-                        {questions.map((question, index) => (
-                          <div key={question.title}>
-                            <p className="text-xs font-bold text-[#8B7D94]">
-                              {question.title}
-                            </p>
-
-                            <p className="mt-1 whitespace-pre-wrap break-words text-sm leading-6">
-                              {request.answers[index] || "ไม่ได้ระบุ"}
-                            </p>
+                        {request.answers.map((answer, index) => (
+                          <div key={`${request.id}-${index}`}>
+                            <p className="mt-1 whitespace-pre-wrap break-words text-sm leading-6">{answer || "ไม่ได้ระบุ"}</p>
                           </div>
                         ))}
 
@@ -704,8 +776,7 @@ export default function VerificationPage() {
                     </div>
 
                     <p className="mt-3 text-xs leading-6 text-[#9B8AAF]">
-                      สถานะนี้เป็นสถานะเริ่มต้นของต้นแบบ
-                      ยังไม่มีผู้ตรวจสอบหรืออนุมัติคำขอจริง
+                      สถานะนี้มาจากฐานข้อมูล และจะเปลี่ยนเมื่อระบบผู้ดูแลอัปเดตคำขอ
                     </p>
                   </article>
                 ))}
