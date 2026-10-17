@@ -13,7 +13,6 @@ const quickLinks = [
   { label: "นัดหมายรับคืน", href: "/scheduling", icon: "📅", description: "จัดการนัดหมายรับสิ่งของคืน" },
   { label: "Marketplace", href: "/marketplace", icon: "🛍️", description: "ดูรายการสินค้ามือสอง" },
   { label: "Hub Points & Rewards", href: "/rewards", icon: "🎁", description: "สะสมแต้มและแลกรางวัล" },
-  { label: "การแจ้งเตือน", href: "/notifications", icon: "🔔", description: "ดูการแจ้งเตือนของคุณ" },
 ];
 
 const categories = [
